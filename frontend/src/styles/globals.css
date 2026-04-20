@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 215 25% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 213 32% 55%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+  }
+
+  .dark {
+    --background: 215 28% 9%;
+    --foreground: 210 40% 95%;
+    --card: 215 25% 12%;
+    --card-foreground: 210 40% 95%;
+    --border: 215 20% 20%;
+    --input: 215 20% 20%;
+    --ring: 213 32% 55%;
+    --muted: 215 25% 15%;
+    --muted-foreground: 215 20% 55%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* Profit colors — muted, not neon */
+.profit-positive { @apply text-emerald-600 dark:text-emerald-400; }
+.profit-negative { @apply text-rose-500 dark:text-rose-400; }
+.profit-neutral  { color: hsl(var(--muted-foreground)); }
