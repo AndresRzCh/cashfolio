@@ -101,7 +101,10 @@ def backfill_history(
     for asset in assets:
         earliest = session.exec(
             select(Trade.date)
-            .where(Trade.asset_id == asset.id, Trade.user_id == current_user.id)
+            .where(
+                Trade.user_id == current_user.id,
+                (Trade.from_asset_id == asset.id) | (Trade.to_asset_id == asset.id),  # type: ignore[operator]
+            )
             .order_by(Trade.date)  # type: ignore[attr-defined]
         ).first()
         if earliest is None:

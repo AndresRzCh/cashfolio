@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import {
   useReactTable,
   getCoreRowModel,
@@ -11,32 +11,29 @@ import {
 } from '@tanstack/react-table'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   ChevronsUpDown,
-  Download,
   MessageSquare,
   Pencil,
   Plus,
   ShoppingCart,
   SlidersHorizontal,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react'
 import { PageTransition } from '@/components/PageTransition'
 import { useAccounts } from '@/features/accounts/useAccounts'
 import { useAssets } from '@/features/assets/useAssets'
-import { useAuth } from '@/features/auth/AuthContext'
 import {
   useTrades,
   useCreateTrade,
   useUpdateTrade,
   useDeleteTrade,
-  useImportTrades,
 } from './useTrades'
 import type { Trade, TradeCreate, TradeUpdate } from './types'
 
@@ -63,7 +60,7 @@ const iconBtn =
   'p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-muted transition-colors duration-150'
 
 // ---------------------------------------------------------------------------
-// Operation badge
+// Helpers
 // ---------------------------------------------------------------------------
 
 function fmtDecimal(val: string | null | undefined): string {
@@ -71,21 +68,6 @@ function fmtDecimal(val: string | null | undefined): string {
   const n = parseFloat(val)
   if (isNaN(n)) return val
   return n.toFixed(10).replace(/\.?0+$/, '') || '0'
-}
-
-function OperationBadge({ operation }: { operation: 'BUY' | 'SELL' }) {
-  return (
-    <span
-      className={[
-        'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide',
-        operation === 'BUY'
-          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
-          : 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400',
-      ].join(' ')}
-    >
-      {operation}
-    </span>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -104,28 +86,26 @@ function SortIcon({ sorted }: { sorted: false | 'asc' | 'desc' }) {
 
 interface FormState {
   date: string
-  operation: 'BUY' | 'SELL'
   account_id: string
-  asset_id: string
-  quantity: string
-  price_per_unit: string
-  currency: string
-  fee: string
-  fee_currency: string
+  from_asset_id: string
+  from_amount: string
+  to_asset_id: string
+  to_amount: string
+  fee_asset_id: string
+  fee_amount: string
   note: string
 }
 
-function blankForm(defaultCurrency: string): FormState {
+function blankForm(): FormState {
   return {
     date: new Date().toISOString().slice(0, 10),
-    operation: 'BUY',
     account_id: '',
-    asset_id: '',
-    quantity: '',
-    price_per_unit: '',
-    currency: defaultCurrency,
-    fee: '',
-    fee_currency: '',
+    from_asset_id: '',
+    from_amount: '',
+    to_asset_id: '',
+    to_amount: '',
+    fee_asset_id: '',
+    fee_amount: '',
     note: '',
   }
 }
@@ -133,14 +113,13 @@ function blankForm(defaultCurrency: string): FormState {
 function tradeToForm(t: Trade): FormState {
   return {
     date: t.date.slice(0, 10),
-    operation: t.operation,
     account_id: String(t.account_id),
-    asset_id: String(t.asset_id),
-    quantity: t.quantity,
-    price_per_unit: t.price_per_unit,
-    currency: t.currency,
-    fee: t.fee ?? '',
-    fee_currency: t.fee_currency ?? '',
+    from_asset_id: String(t.from_asset_id),
+    from_amount: t.from_amount,
+    to_asset_id: String(t.to_asset_id),
+    to_amount: t.to_amount,
+    fee_asset_id: t.fee_asset_id != null ? String(t.fee_asset_id) : '',
+    fee_amount: t.fee_amount ?? '',
     note: t.note ?? '',
   }
 }
@@ -148,14 +127,13 @@ function tradeToForm(t: Trade): FormState {
 function formToCreate(f: FormState): TradeCreate {
   return {
     date: f.date,
-    operation: f.operation,
     account_id: Number(f.account_id),
-    asset_id: Number(f.asset_id),
-    quantity: f.quantity.trim(),
-    price_per_unit: f.price_per_unit.trim(),
-    currency: f.currency.trim().toUpperCase(),
-    fee: f.fee.trim() || null,
-    fee_currency: f.fee_currency.trim().toUpperCase() || null,
+    from_asset_id: Number(f.from_asset_id),
+    from_amount: f.from_amount.trim(),
+    to_asset_id: Number(f.to_asset_id),
+    to_amount: f.to_amount.trim(),
+    fee_asset_id: f.fee_asset_id ? Number(f.fee_asset_id) : null,
+    fee_amount: f.fee_amount.trim() || null,
     note: f.note.trim() || null,
   }
 }
@@ -163,14 +141,13 @@ function formToCreate(f: FormState): TradeCreate {
 function formToUpdate(f: FormState): TradeUpdate {
   return {
     date: f.date,
-    operation: f.operation,
     account_id: Number(f.account_id),
-    asset_id: Number(f.asset_id),
-    quantity: f.quantity.trim(),
-    price_per_unit: f.price_per_unit.trim(),
-    currency: f.currency.trim().toUpperCase(),
-    fee: f.fee.trim() || null,
-    fee_currency: f.fee_currency.trim().toUpperCase() || null,
+    from_asset_id: Number(f.from_asset_id),
+    from_amount: f.from_amount.trim(),
+    to_asset_id: Number(f.to_asset_id),
+    to_amount: f.to_amount.trim(),
+    fee_asset_id: f.fee_asset_id ? Number(f.fee_asset_id) : null,
+    fee_amount: f.fee_amount.trim() || null,
     note: f.note.trim() || null,
   }
 }
@@ -198,10 +175,10 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
 
   const canSubmit =
     form.account_id !== '' &&
-    form.asset_id !== '' &&
-    form.quantity.trim() !== '' &&
-    form.price_per_unit.trim() !== '' &&
-    form.currency.trim() !== '' &&
+    form.from_asset_id !== '' &&
+    form.from_amount.trim() !== '' &&
+    form.to_asset_id !== '' &&
+    form.to_amount.trim() !== '' &&
     form.date !== '' &&
     !isPending
 
@@ -213,7 +190,7 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
       transition={{ duration: 0.18 }}
       className="rounded-2xl border border-accent-200 dark:border-accent-700/40 bg-accent-50/40 dark:bg-accent-900/10 p-4 space-y-4"
     >
-      {/* Row 1: Date + Operation toggle */}
+      {/* Row 1: Date + Account */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -227,41 +204,6 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
             autoFocus
           />
         </div>
-        <div className="space-y-1">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Operation <span className="text-rose-500">*</span>
-          </label>
-          <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-600 h-[38px]">
-            <button
-              type="button"
-              onClick={() => set('operation', 'BUY')}
-              className={[
-                'flex-1 text-sm font-semibold transition-colors duration-150',
-                form.operation === 'BUY'
-                  ? 'bg-emerald-500 text-white'
-                  : 'bg-slate-50 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600',
-              ].join(' ')}
-            >
-              BUY
-            </button>
-            <button
-              type="button"
-              onClick={() => set('operation', 'SELL')}
-              className={[
-                'flex-1 text-sm font-semibold transition-colors duration-150',
-                form.operation === 'SELL'
-                  ? 'bg-rose-500 text-white'
-                  : 'bg-slate-50 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600',
-              ].join(' ')}
-            >
-              SELL
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Row 2: Account + Asset */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
             Account <span className="text-rose-500">*</span>
@@ -279,13 +221,17 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
             ))}
           </select>
         </div>
+      </div>
+
+      {/* Row 2: From asset + From amount */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Asset <span className="text-rose-500">*</span>
+            From asset <span className="text-rose-500">*</span>
           </label>
           <select
-            value={form.asset_id}
-            onChange={(e) => set('asset_id', e.target.value)}
+            value={form.from_asset_id}
+            onChange={(e) => set('from_asset_id', e.target.value)}
             className={inputCls}
           >
             <option value="">— Select asset —</option>
@@ -296,73 +242,82 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
             ))}
           </select>
         </div>
-      </div>
-
-      {/* Row 3: Quantity + Price per unit + Currency */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            {form.operation === 'BUY' ? 'Qty to buy' : 'Qty to sell'}{' '}
-            <span className="text-rose-500">*</span>
+            From amount <span className="text-rose-500">*</span>
           </label>
           <input
-            value={form.quantity}
-            onChange={(e) => set('quantity', e.target.value)}
+            value={form.from_amount}
+            onChange={(e) => set('from_amount', e.target.value)}
             placeholder="0.00"
             className={inputCls + ' font-mono'}
             inputMode="decimal"
           />
         </div>
-        <div className="space-y-1">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Price per unit <span className="text-rose-500">*</span>
-          </label>
-          <input
-            value={form.price_per_unit}
-            onChange={(e) => set('price_per_unit', e.target.value)}
-            placeholder="0.00"
-            className={inputCls + ' font-mono'}
-            inputMode="decimal"
-          />
-        </div>
-        <div className="space-y-1">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Currency <span className="text-rose-500">*</span>
-          </label>
-          <input
-            value={form.currency}
-            onChange={(e) => set('currency', e.target.value.toUpperCase())}
-            placeholder="EUR"
-            maxLength={10}
-            className={inputCls + ' font-mono uppercase'}
-          />
-        </div>
       </div>
 
-      {/* Row 4: Fee + Fee Currency */}
+      {/* Row 3: To asset + To amount */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Fee <span className="text-slate-400 font-normal">(optional)</span>
+            To asset <span className="text-rose-500">*</span>
+          </label>
+          <select
+            value={form.to_asset_id}
+            onChange={(e) => set('to_asset_id', e.target.value)}
+            className={inputCls}
+          >
+            <option value="">— Select asset —</option>
+            {assets.map((a) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.symbol} — {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+            To amount <span className="text-rose-500">*</span>
           </label>
           <input
-            value={form.fee}
-            onChange={(e) => set('fee', e.target.value)}
+            value={form.to_amount}
+            onChange={(e) => set('to_amount', e.target.value)}
             placeholder="0.00"
             className={inputCls + ' font-mono'}
             inputMode="decimal"
           />
         </div>
+      </div>
+
+      {/* Row 4: Fee asset + Fee amount */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Fee Currency <span className="text-slate-400 font-normal">(optional)</span>
+            Fee asset <span className="text-slate-400 font-normal">(optional)</span>
+          </label>
+          <select
+            value={form.fee_asset_id}
+            onChange={(e) => set('fee_asset_id', e.target.value)}
+            className={inputCls}
+          >
+            <option value="">— None —</option>
+            {assets.map((a) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.symbol} — {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+            Fee amount <span className="text-slate-400 font-normal">(optional)</span>
           </label>
           <input
-            value={form.fee_currency}
-            onChange={(e) => set('fee_currency', e.target.value.toUpperCase())}
-            placeholder="EUR"
-            maxLength={10}
-            className={inputCls + ' font-mono uppercase'}
+            value={form.fee_amount}
+            onChange={(e) => set('fee_amount', e.target.value)}
+            placeholder="0.00"
+            className={inputCls + ' font-mono'}
+            inputMode="decimal"
           />
         </div>
       </div>
@@ -396,70 +351,31 @@ function TradeForm({ initial, isPending, onSubmit, onCancel, submitLabel }: Trad
 }
 
 // ---------------------------------------------------------------------------
-// CSV export
-// ---------------------------------------------------------------------------
-
-function exportTradesCSV(
-  trades: Trade[],
-  accountName: (id: number) => string,
-  assetSymbol: (id: number) => string,
-) {
-  const headers = [
-    'id', 'date', 'account', 'operation', 'asset',
-    'quantity', 'price_per_unit', 'currency', 'fee', 'fee_currency', 'note',
-  ]
-  const rows = trades.map((t) =>
-    [
-      t.id, t.date.slice(0, 10), accountName(t.account_id), t.operation, assetSymbol(t.asset_id),
-      t.quantity, t.price_per_unit, t.currency, t.fee ?? '', t.fee_currency ?? '', t.note ?? '',
-    ].join(',')
-  )
-  const csv = [headers.join(','), ...rows].join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'trades.csv'
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-// ---------------------------------------------------------------------------
 // TradesPage
 // ---------------------------------------------------------------------------
 
 export function TradesPage() {
-  const { user } = useAuth()
-  const defaultCurrency = user?.base_currency ?? 'EUR'
-
   const { data: trades = [], isLoading } = useTrades()
   const { data: accounts = [] } = useAccounts()
   const { data: assets = [] } = useAssets()
   const createTrade = useCreateTrade()
   const updateTrade = useUpdateTrade()
   const deleteTrade = useDeleteTrade()
-  const importTrades = useImportTrades()
 
   const [mode, setMode] = useState<'idle' | 'adding' | { editing: number }>('idle')
   const [deleteId, setDeleteId] = useState<number | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Filters
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
-  const [filterOperation, setFilterOperation] = useState<'' | 'BUY' | 'SELL'>('')
   const [filterAccountId, setFilterAccountId] = useState('')
-  const [filterAssetId, setFilterAssetId] = useState('')
+  const [filterFromAssetId, setFilterFromAssetId] = useState('')
+  const [filterToAssetId, setFilterToAssetId] = useState('')
 
   // TanStack Table state
   const [sorting, setSorting] = useState<SortingState>([{ id: 'date', desc: true }])
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 })
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file) { importTrades.mutate(file); e.target.value = '' }
-  }
 
   const isAdding = mode === 'adding'
   const editingId = typeof mode === 'object' ? mode.editing : null
@@ -483,17 +399,17 @@ export function TradesPage() {
     deleteTrade.mutate(deleteId, { onSuccess: () => setDeleteId(null) })
   }
 
-  const hasFilters = filterDateFrom || filterDateTo || filterOperation || filterAccountId || filterAssetId
+  const hasFilters = filterDateFrom || filterDateTo || filterAccountId || filterFromAssetId || filterToAssetId
   const filtered = useMemo(
     () => trades.filter((t) => {
       if (filterDateFrom && t.date.slice(0, 10) < filterDateFrom) return false
       if (filterDateTo && t.date.slice(0, 10) > filterDateTo) return false
-      if (filterOperation && t.operation !== filterOperation) return false
       if (filterAccountId && t.account_id !== Number(filterAccountId)) return false
-      if (filterAssetId && t.asset_id !== Number(filterAssetId)) return false
+      if (filterFromAssetId && t.from_asset_id !== Number(filterFromAssetId)) return false
+      if (filterToAssetId && t.to_asset_id !== Number(filterToAssetId)) return false
       return true
     }),
-    [trades, filterDateFrom, filterDateTo, filterOperation, filterAccountId, filterAssetId],
+    [trades, filterDateFrom, filterDateTo, filterAccountId, filterFromAssetId, filterToAssetId],
   )
 
   // Column definitions
@@ -505,66 +421,69 @@ export function TradesPage() {
         cell: ({ getValue }) => (getValue<string>()).slice(0, 10),
       },
       {
-        accessorKey: 'operation',
-        header: 'Operation',
-        cell: ({ getValue }) => <OperationBadge operation={getValue<'BUY' | 'SELL'>()} />,
-        sortingFn: (a, b) => a.original.operation.localeCompare(b.original.operation),
-      },
-      {
-        id: 'asset',
-        header: 'Asset',
-        accessorFn: (row) => assetSymbol(row.asset_id),
-        cell: ({ row }) => assetSymbol(row.original.asset_id),
-      },
-      {
         id: 'account',
         header: 'Account',
         accessorFn: (row) => accountName(row.account_id),
+        cell: ({ row }) => (
+          <span className="text-xs text-slate-600 dark:text-slate-400">
+            {accountName(row.original.account_id)}
+          </span>
+        ),
       },
       {
-        accessorKey: 'quantity',
-        header: 'Qty',
-        sortingFn: (a, b) => parseFloat(a.original.quantity) - parseFloat(b.original.quantity),
-        cell: ({ getValue }) => fmtDecimal(getValue<string>()),
-      },
-      {
-        accessorKey: 'price_per_unit',
-        header: 'Price/unit',
-        sortingFn: (a, b) => parseFloat(a.original.price_per_unit) - parseFloat(b.original.price_per_unit),
-        cell: ({ getValue }) => fmtDecimal(getValue<string>()),
-      },
-      {
-        accessorKey: 'currency',
-        header: 'Ccy',
+        id: 'from',
+        header: 'From',
         enableSorting: false,
-        cell: ({ getValue }) => {
-          const ccy = getValue<string>()
-          const isForeign = ccy !== defaultCurrency
+        cell: ({ row }) => {
+          const t = row.original
           return (
-            <span
-              className={
-                isForeign
-                  ? 'inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-mono font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
-                  : 'inline-flex items-center px-1.5 py-0.5 text-xs font-mono text-slate-500 dark:text-slate-400'
-              }
-            >
-              {ccy}
+            <span className="font-mono text-sm">
+              <span className="text-slate-500 dark:text-slate-400 mr-1">{fmtDecimal(t.from_amount)}</span>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">{assetSymbol(t.from_asset_id)}</span>
             </span>
           )
         },
       },
       {
-        accessorKey: 'fee',
-        header: 'Fee',
-        cell: ({ row }) =>
-          row.original.fee != null
-            ? `${fmtDecimal(row.original.fee)}${row.original.fee_currency ? ' ' + row.original.fee_currency : ''}`
-            : '—',
+        id: 'arrow',
+        header: '',
         enableSorting: false,
+        cell: () => (
+          <ArrowRight size={13} className="text-slate-300 dark:text-slate-600 mx-auto" />
+        ),
+      },
+      {
+        id: 'to',
+        header: 'To',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const t = row.original
+          return (
+            <span className="font-mono text-sm">
+              <span className="text-slate-500 dark:text-slate-400 mr-1">{fmtDecimal(t.to_amount)}</span>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">{assetSymbol(t.to_asset_id)}</span>
+            </span>
+          )
+        },
+      },
+      {
+        id: 'fee',
+        header: 'Fee',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const t = row.original
+          if (!t.fee_amount || !t.fee_asset_id) return <span className="text-muted-foreground">—</span>
+          return (
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+              {fmtDecimal(t.fee_amount)} {assetSymbol(t.fee_asset_id)}
+            </span>
+          )
+        },
       },
       {
         accessorKey: 'note',
         header: '',
+        enableSorting: false,
         cell: ({ getValue }) => {
           const note = getValue<string | null>()
           if (!note) return null
@@ -574,7 +493,6 @@ export function TradesPage() {
             </span>
           )
         },
-        enableSorting: false,
       },
       {
         id: 'actions',
@@ -602,7 +520,7 @@ export function TradesPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accounts, assets, isAdding, defaultCurrency],
+    [accounts, assets, isAdding],
   )
 
   const table = useReactTable({
@@ -630,24 +548,13 @@ export function TradesPage() {
               Trades
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Record asset purchases and sales.
+              Record asset swaps and purchases.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
-            <button onClick={() => fileInputRef.current?.click()} disabled={importTrades.isPending} className={btnGhost}>
-              <Upload size={15} />
-              {importTrades.isPending ? 'Importing…' : 'Import CSV'}
-            </button>
-            <button onClick={() => exportTradesCSV(trades, accountName, assetSymbol)} disabled={trades.length === 0} className={btnGhost}>
-              <Download size={15} />
-              Export CSV
-            </button>
-            <button onClick={() => setMode('adding')} disabled={isAdding || editingId !== null} className={btnPrimary}>
-              <Plus size={15} />
-              Add Trade
-            </button>
-          </div>
+          <button onClick={() => setMode('adding')} disabled={isAdding || editingId !== null} className={btnPrimary}>
+            <Plus size={15} />
+            Add Trade
+          </button>
         </div>
 
         {/* Filter bar */}
@@ -657,11 +564,11 @@ export function TradesPage() {
             className={[btnGhost, hasFilters ? 'border-accent-400 text-accent-600 dark:text-accent-300' : ''].join(' ')}
           >
             <SlidersHorizontal size={15} />
-            Filters{hasFilters ? ` (${[filterDateFrom, filterDateTo, filterOperation, filterAccountId, filterAssetId].filter(Boolean).length})` : ''}
+            Filters{hasFilters ? ` (${[filterDateFrom, filterDateTo, filterAccountId, filterFromAssetId, filterToAssetId].filter(Boolean).length})` : ''}
           </button>
           {hasFilters && (
             <button
-              onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setFilterOperation(''); setFilterAccountId(''); setFilterAssetId('') }}
+              onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setFilterAccountId(''); setFilterFromAssetId(''); setFilterToAssetId('') }}
               className="text-xs text-muted-foreground hover:text-slate-700 dark:hover:text-slate-200 flex items-center gap-1"
             >
               <X size={12} /> Clear
@@ -685,14 +592,6 @@ export function TradesPage() {
                 <input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className={inputCls} />
               </div>
               <div className="space-y-1">
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Operation</label>
-                <select value={filterOperation} onChange={(e) => setFilterOperation(e.target.value as '' | 'BUY' | 'SELL')} className={inputCls}>
-                  <option value="">All</option>
-                  <option value="BUY">BUY</option>
-                  <option value="SELL">SELL</option>
-                </select>
-              </div>
-              <div className="space-y-1">
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Account</label>
                 <select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className={inputCls}>
                   <option value="">All accounts</option>
@@ -700,9 +599,16 @@ export function TradesPage() {
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">Asset</label>
-                <select value={filterAssetId} onChange={(e) => setFilterAssetId(e.target.value)} className={inputCls}>
-                  <option value="">All assets</option>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">From asset</label>
+                <select value={filterFromAssetId} onChange={(e) => setFilterFromAssetId(e.target.value)} className={inputCls}>
+                  <option value="">All</option>
+                  {assets.map((a) => <option key={a.id} value={String(a.id)}>{a.symbol}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">To asset</label>
+                <select value={filterToAssetId} onChange={(e) => setFilterToAssetId(e.target.value)} className={inputCls}>
+                  <option value="">All</option>
                   {assets.map((a) => <option key={a.id} value={String(a.id)}>{a.symbol}</option>)}
                 </select>
               </div>
@@ -715,7 +621,7 @@ export function TradesPage() {
           {isAdding && (
             <TradeForm
               key="form-add"
-              initial={blankForm(defaultCurrency)}
+              initial={blankForm()}
               isPending={createTrade.isPending}
               onSubmit={handleCreate}
               onCancel={() => setMode('idle')}
@@ -744,10 +650,10 @@ export function TradesPage() {
           )}
         </AnimatePresence>
 
-        {/* Table — desktop (TanStack Table) */}
+        {/* Table — desktop */}
         <div className="hidden sm:block rounded-2xl border border-border overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[800px]">
+            <table className="w-full text-sm min-w-[700px]">
               <thead>
                 {table.getHeaderGroups().map((hg) => (
                   <tr key={hg.id} className="border-b border-border bg-muted/50">
@@ -755,19 +661,16 @@ export function TradesPage() {
                       const canSort = header.column.getCanSort()
                       const sorted = header.column.getIsSorted()
                       const col = header.column.id
-                      const isNumeric = col === 'quantity' || col === 'price_per_unit' || col === 'fee'
                       const isHiddenLg = col === 'fee'
-                      const isHiddenXl = col === 'note'
                       return (
                         <th
                           key={header.id}
                           onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                           className={[
-                            'px-4 py-2.5 font-medium text-muted-foreground text-sm whitespace-nowrap',
-                            isNumeric ? 'text-right' : 'text-left',
+                            'px-4 py-2.5 font-medium text-muted-foreground text-sm whitespace-nowrap text-left',
                             canSort ? 'cursor-pointer select-none hover:text-foreground transition-colors' : '',
                             isHiddenLg ? 'hidden lg:table-cell' : '',
-                            isHiddenXl ? 'hidden xl:table-cell' : '',
+                            col === 'arrow' ? 'w-6 px-0' : '',
                             i === colCount - 1 ? 'w-20' : '',
                           ].join(' ')}
                         >
@@ -792,7 +695,7 @@ export function TradesPage() {
                           {hasFilters ? 'No trades match the current filters.' : 'No trades yet'}
                         </p>
                         {!hasFilters && (
-                          <p className="text-sm text-muted-foreground">Add your first trade or import a CSV file.</p>
+                          <p className="text-sm text-muted-foreground">Add your first trade to get started.</p>
                         )}
                       </div>
                     </td>
@@ -816,23 +719,15 @@ export function TradesPage() {
                       <tr className="border-b border-border last:border-0 hover:bg-muted/40 transition-colors">
                         {row.getVisibleCells().map((cell) => {
                           const col = cell.column.id
-                          const isNumeric = col === 'quantity' || col === 'price_per_unit' || col === 'fee'
                           const isHiddenLg = col === 'fee'
-                          const isHiddenXl = col === 'note'
                           return (
                             <td
                               key={cell.id}
                               className={[
                                 'px-4 py-3',
-                                isNumeric ? 'text-right font-mono text-slate-800 dark:text-slate-100' : '',
-                                col === 'fee' ? 'text-right font-mono text-slate-500 dark:text-slate-400 text-xs' : '',
-                                col === 'currency' ? '' : '',
-                                col === 'note' ? 'text-slate-500 dark:text-slate-400 text-xs max-w-[160px] truncate' : '',
                                 col === 'date' ? 'text-slate-700 dark:text-slate-300 whitespace-nowrap' : '',
-                                col === 'asset' ? 'font-mono font-medium text-slate-800 dark:text-slate-100' : '',
-                                col === 'account' ? 'text-slate-700 dark:text-slate-300 text-xs' : '',
+                                col === 'arrow' ? 'px-0 text-center' : '',
                                 isHiddenLg ? 'hidden lg:table-cell' : '',
-                                isHiddenXl ? 'hidden xl:table-cell' : '',
                               ].join(' ')}
                             >
                               {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -886,7 +781,7 @@ export function TradesPage() {
           )}
         </div>
 
-        {/* Mobile card list (≤640px) */}
+        {/* Mobile card list */}
         <div className="sm:hidden space-y-3">
           {isLoading && <p className="text-center text-muted-foreground py-8">Loading…</p>}
           {!isLoading && filtered.length === 0 && !isAdding && (
@@ -895,9 +790,6 @@ export function TradesPage() {
               <p className="font-medium text-slate-700 dark:text-slate-300">
                 {hasFilters ? 'No trades match the current filters.' : 'No trades yet'}
               </p>
-              {!hasFilters && (
-                <p className="text-sm text-muted-foreground text-center">Add your first trade or import a CSV file.</p>
-              )}
             </div>
           )}
           <AnimatePresence initial={false}>
@@ -912,11 +804,10 @@ export function TradesPage() {
                 className="rounded-2xl border border-border bg-card p-4 space-y-2"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <OperationBadge operation={t.operation} />
-                    <span className="font-mono font-medium text-slate-800 dark:text-slate-100">
-                      {assetSymbol(t.asset_id)}
-                    </span>
+                  <div className="flex items-center gap-2 font-mono text-sm font-medium text-slate-800 dark:text-slate-100">
+                    <span>{fmtDecimal(t.from_amount)} {assetSymbol(t.from_asset_id)}</span>
+                    <ArrowRight size={13} className="text-slate-400" />
+                    <span>{fmtDecimal(t.to_amount)} {assetSymbol(t.to_asset_id)}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <button onClick={() => setMode({ editing: t.id })} className={iconBtn} aria-label="Edit trade">
@@ -931,22 +822,11 @@ export function TradesPage() {
                     </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-mono text-slate-800 dark:text-slate-100">{fmtDecimal(t.quantity)}</span>
-                  <span className="text-muted-foreground text-xs">×</span>
-                  <span className="font-mono text-slate-700 dark:text-slate-300">{fmtDecimal(t.price_per_unit)}</span>
-                  <span
-                    className={
-                      t.currency !== defaultCurrency
-                        ? 'inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-mono font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
-                        : 'font-mono text-xs text-slate-500 dark:text-slate-400'
-                    }
-                  >
-                    {t.currency}
-                  </span>
-                </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{accountName(t.account_id)} · {t.date.slice(0, 10)}</span>
+                  {t.fee_amount && t.fee_asset_id && (
+                    <span className="font-mono">fee: {fmtDecimal(t.fee_amount)} {assetSymbol(t.fee_asset_id)}</span>
+                  )}
                   {t.note && (
                     <span title={t.note} className="flex items-center cursor-default">
                       <MessageSquare className="w-3 h-3 text-slate-400 dark:text-slate-500" />

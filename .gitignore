@@ -34,3 +34,8 @@ data/
 
 # Redundant per-service env examples (root .env.example is canonical)
 backend/.env.example
+
+# Local-only files (personal data, never commit)
+extracto.xlsx
+backend/alembic/versions/001[2-9]_*.py
+backend/alembic/versions/002[0-3]_*.py

@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, RefreshCw, History } from 'lucide-react'
+import { useState, useMemo, Fragment } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
+import { Download, RefreshCw, History, ChevronRight, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
 import { api } from '@/lib/api'
@@ -8,7 +9,7 @@ import { useHoldings } from './useHoldings'
 import { useAssets } from '../assets/useAssets'
 import { useAuth } from '@/features/auth/AuthContext'
 import { fmtCurrency } from '@/lib/currency'
-import type { HoldingRow } from './types'
+import type { HoldingRow, AccountHoldingRow } from './types'
 import type { Asset } from '../assets/types'
 
 // ── Style constants ───────────────────────────────────────────────────────────
@@ -146,12 +147,23 @@ function GroupHeader({ group, currency }: { group: AssetGroup; currency: string 
 
 // ── Asset table (desktop) ─────────────────────────────────────────────────────
 
-function AssetTable({ holdings, currency }: { holdings: AssetGroup['holdings']; currency: string }) {
+function AssetTable({
+  holdings,
+  currency,
+  expandedAssets,
+  onToggle,
+}: {
+  holdings: AssetGroup['holdings']
+  currency: string
+  expandedAssets: Set<number | string>
+  onToggle: (id: number | string) => void
+}) {
   return (
     <div className="hidden sm:block rounded-2xl bg-card border border-border overflow-hidden">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-muted-foreground">
+            <th className="w-8 px-2 py-3" />
             <th className="text-left px-4 py-3 font-medium">Asset</th>
             <th className="text-right px-4 py-3 font-medium">Qty</th>
             <th className="text-right px-4 py-3 font-medium">Price</th>
@@ -162,29 +174,68 @@ function AssetTable({ holdings, currency }: { holdings: AssetGroup['holdings']; 
           </tr>
         </thead>
         <tbody>
-          {holdings.map((h) => (
-            <tr
-              key={h.asset_id}
-              className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors"
-            >
-              <td className="px-4 py-3">
-                <span className="font-semibold text-foreground">{h.asset_symbol}</span>
-                <span className="ml-2 text-muted-foreground">{h.asset_name}</span>
-              </td>
-              <td className="px-4 py-3 text-right font-mono">{fmtQty(h.net_quantity)}</td>
-              <td className="px-4 py-3 text-right font-mono">{fmtCurrency(h.current_price, currency)}</td>
-              <td className="px-4 py-3 text-right font-mono">{fmtCurrency(h.current_value, currency)}</td>
-              <td className={`px-4 py-3 text-right font-mono ${pnlClass(h.unrealized_pnl)}`}>
-                {fmtCurrency(h.unrealized_pnl, currency)}
-              </td>
-              <td className={`px-4 py-3 text-right font-mono ${pnlClass(h.unrealized_pnl_pct)}`}>
-                {fmtPct(h.unrealized_pnl_pct)}
-              </td>
-              <td className="px-4 py-3 text-right">
-                <SourceBadge source={h.asset?.price_source} />
-              </td>
-            </tr>
-          ))}
+          {holdings.map((h) => {
+            const assetKey = h.asset_id
+            const isExpanded = expandedAssets.has(assetKey)
+            const hasMultipleAccounts = h.accounts && h.accounts.length > 1
+            const singleAccount = !hasMultipleAccounts && h.accounts?.length === 1 ? h.accounts[0] : null
+            return (
+              <Fragment key={h.asset_id}>
+                <tr
+                  onClick={() => hasMultipleAccounts && onToggle(assetKey)}
+                  className={`border-b border-border last:border-0 transition-colors ${hasMultipleAccounts ? 'cursor-pointer hover:bg-muted/50' : 'hover:bg-muted/30'}`}
+                >
+                  <td className="px-2 py-3 text-muted-foreground w-8">
+                    {hasMultipleAccounts
+                      ? isExpanded
+                        ? <ChevronDown className="w-4 h-4" />
+                        : <ChevronRight className="w-4 h-4" />
+                      : null}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-semibold text-foreground">{h.asset_symbol}</span>
+                    <span className="ml-2 text-muted-foreground">{h.asset_name}</span>
+                    {singleAccount && (
+                      <span className="ml-1 text-muted-foreground/60 text-xs">({singleAccount.account_name})</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">{fmtQty(h.net_quantity)}</td>
+                  <td className="px-4 py-3 text-right font-mono">{fmtCurrency(h.current_price, currency)}</td>
+                  <td className="px-4 py-3 text-right font-mono">{fmtCurrency(h.current_value, currency)}</td>
+                  <td className={`px-4 py-3 text-right font-mono ${pnlClass(h.unrealized_pnl)}`}>
+                    {fmtCurrency(h.unrealized_pnl, currency)}
+                  </td>
+                  <td className={`px-4 py-3 text-right font-mono ${pnlClass(h.unrealized_pnl_pct)}`}>
+                    {fmtPct(h.unrealized_pnl_pct)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <SourceBadge source={h.asset?.price_source} />
+                  </td>
+                </tr>
+                {hasMultipleAccounts && isExpanded && h.accounts?.map((acc: AccountHoldingRow) => (
+                  <tr
+                    key={`${h.asset_id}-${acc.account_id}`}
+                    className="border-b border-border bg-muted/20"
+                  >
+                    <td className="px-2 py-2" />
+                    <td className="px-4 py-2 pl-10 text-muted-foreground text-xs italic">
+                      {acc.account_name}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono text-xs">{fmtQty(acc.net_quantity)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs">{fmtCurrency(h.current_price, currency)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-xs">{fmtCurrency(acc.current_value, currency)}</td>
+                    <td className={`px-4 py-2 text-right font-mono text-xs ${pnlClass(acc.unrealized_pnl)}`}>
+                      {fmtCurrency(acc.unrealized_pnl, currency)}
+                    </td>
+                    <td className={`px-4 py-2 text-right font-mono text-xs ${pnlClass(acc.unrealized_pnl_pct)}`}>
+                      {fmtPct(acc.unrealized_pnl_pct)}
+                    </td>
+                    <td className="px-4 py-2" />
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -231,7 +282,16 @@ export default function HoldingsPage() {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isBackfilling, setIsBackfilling] = useState(false)
+  const [expandedAssets, setExpandedAssets] = useState<Set<number | string>>(new Set())
   const currency = user?.base_currency ?? 'EUR'
+
+  function toggleAsset(id: number | string) {
+    setExpandedAssets(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
 
   // Build lookup maps
   const assetById = useMemo(
@@ -243,10 +303,10 @@ export default function HoldingsPage() {
     [assetTypes]
   )
 
-  // Group holdings by asset type
+  // Group holdings by asset type, then add virtual Cash group from account_fiat
   const groups = useMemo<AssetGroup[]>(() => {
     if (!data) return []
-    const groupMap = new Map<number | null, AssetGroup>()
+    const groupMap = new Map<number | string | null, AssetGroup>()
 
     for (const h of data.holdings) {
       const asset = assetById.get(h.asset_id)
@@ -268,10 +328,77 @@ export default function HoldingsPage() {
       group.totalPnl += isNaN(pnl) ? 0 : pnl
     }
 
+    // Build virtual Cash group from fiat account balances
+    if (data.account_fiat && data.account_fiat.length > 0) {
+      const fiatByCurrency = new Map<string, {
+        totalAmount: number
+        totalValue: number
+        totalCost: number
+        totalPnl: number
+        accounts: AccountHoldingRow[]
+      }>()
+
+      for (const acc of data.account_fiat) {
+        for (const row of acc.rows) {
+          if (!fiatByCurrency.has(row.currency)) {
+            fiatByCurrency.set(row.currency, { totalAmount: 0, totalValue: 0, totalCost: 0, totalPnl: 0, accounts: [] })
+          }
+          const agg = fiatByCurrency.get(row.currency)!
+          agg.totalAmount += parseFloat(row.amount)
+          agg.totalValue += row.current_value ? parseFloat(row.current_value) : parseFloat(row.amount)
+          agg.totalCost += parseFloat(row.cost_basis)
+          agg.totalPnl += row.unrealized_pnl ? parseFloat(row.unrealized_pnl) : 0
+          agg.accounts.push({
+            account_id: acc.account_id,
+            account_name: acc.account_name,
+            net_quantity: row.amount,
+            cost_basis: row.cost_basis,
+            current_value: row.current_value,
+            unrealized_pnl: row.unrealized_pnl,
+            unrealized_pnl_pct: null,
+          })
+        }
+      }
+
+      const cashHoldings: AssetGroup['holdings'] = []
+      let currencyIndex = 0
+      for (const [cur, agg] of fiatByCurrency) {
+        const virtualId = cur === 'EUR' ? -17 : cur === 'USD' ? -16 : -(100 + currencyIndex++)
+        cashHoldings.push({
+          asset_id: virtualId,
+          asset_symbol: cur,
+          asset_name: cur === 'EUR' ? 'Euro' : cur === 'USD' ? 'US Dollar' : cur,
+          net_quantity: agg.totalAmount.toFixed(8),
+          cost_basis: agg.totalCost.toFixed(8),
+          avg_cost_per_unit: agg.totalAmount > 0 ? (agg.totalCost / agg.totalAmount).toFixed(8) : '0',
+          current_price: agg.totalAmount > 0 ? (agg.totalValue / agg.totalAmount).toFixed(8) : null,
+          price_date: null,
+          current_value: agg.totalValue.toFixed(8),
+          unrealized_pnl: agg.totalPnl.toFixed(8),
+          unrealized_pnl_pct: agg.totalCost > 0 ? (agg.totalPnl / agg.totalCost * 100).toFixed(4) : null,
+          accounts: agg.accounts,
+          asset: undefined,
+        })
+      }
+
+      if (cashHoldings.length > 0) {
+        const cashTotalValue = cashHoldings.reduce((s, h) => s + parseFloat(h.current_value ?? '0'), 0)
+        const cashTotalCost = cashHoldings.reduce((s, h) => s + parseFloat(h.cost_basis), 0)
+        const cashTotalPnl = cashHoldings.reduce((s, h) => s + parseFloat(h.unrealized_pnl ?? '0'), 0)
+        groupMap.set('__cash__', {
+          label: 'Cash',
+          holdings: cashHoldings,
+          totalValue: cashTotalValue,
+          totalCost: cashTotalCost,
+          totalPnl: cashTotalPnl,
+        })
+      }
+    }
+
     return Array.from(groupMap.values()).sort((a, b) => b.totalValue - a.totalValue)
   }, [data, assetById, typeById])
 
-  const hasHoldings = data && data.holdings.length > 0
+  const hasHoldings = data && (data.holdings.length > 0 || (data.account_fiat && data.account_fiat.length > 0))
 
   const latestPriceDate = data?.holdings.reduce<string | undefined>(
     (max, h) => h.price_date && (!max || h.price_date > max) ? h.price_date : max,
@@ -298,10 +425,15 @@ export default function HoldingsPage() {
     if (!data || isRefreshing) return
     setIsRefreshing(true)
     try {
-      await Promise.all(
-        data.holdings.map((h) =>
-          api.post(`/assets/${h.asset_id}/refresh-price`).catch(() => null)
-        )
+      await Promise.allSettled(
+        data.holdings.map((h) => {
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 60_000)
+          return api
+            .post(`/assets/${h.asset_id}/refresh-price`, null, { signal: controller.signal })
+            .finally(() => clearTimeout(timeout))
+            .catch(() => null)
+        })
       )
       await qc.invalidateQueries({ queryKey: ['holdings'] })
     } finally {
@@ -356,7 +488,7 @@ export default function HoldingsPage() {
       )}
 
       {/* Empty state */}
-      {data && data.holdings.length === 0 && (
+      {data && !hasHoldings && (
         <div className="rounded-2xl bg-card border border-border p-12 text-center">
           <p className="text-muted-foreground">
             No holdings yet. Add transfers or trades to see your portfolio.
@@ -370,7 +502,12 @@ export default function HoldingsPage() {
           {groups.map((group) => (
             <div key={group.label} className="space-y-3">
               <GroupHeader group={group} currency={currency} />
-              <AssetTable holdings={group.holdings} currency={currency} />
+              <AssetTable
+                holdings={group.holdings}
+                currency={currency}
+                expandedAssets={expandedAssets}
+                onToggle={toggleAsset}
+              />
               <div className="sm:hidden space-y-3">
                 {group.holdings.map((h) => (
                   <AssetCard key={h.asset_id} h={h} currency={currency} />

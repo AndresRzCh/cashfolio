@@ -5,6 +5,7 @@ export interface Account {
   id: number
   name: string
   type: string
+  fiat_enabled: boolean
 }
 
 export function useAccounts() {

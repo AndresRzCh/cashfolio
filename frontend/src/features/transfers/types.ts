@@ -6,6 +6,7 @@ export interface Transfer {
   amount: string
   currency: string
   fee: string | null
+  value: string | null
   date: string
   note: string | null
 }
@@ -16,6 +17,7 @@ export interface TransferCreate {
   amount: string
   currency: string
   fee?: string | null
+  value?: string | null
   date: string
   note?: string | null
 }

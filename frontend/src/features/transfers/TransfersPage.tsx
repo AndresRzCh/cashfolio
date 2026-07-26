@@ -103,6 +103,7 @@ interface FormState {
   amount: string
   currency: string
   fee: string
+  value: string
   date: string
   note: string
 }
@@ -114,6 +115,7 @@ function blankForm(defaultCurrency: string): FormState {
     amount: '',
     currency: defaultCurrency,
     fee: '',
+    value: '',
     date: new Date().toISOString().slice(0, 10),
     note: '',
   }
@@ -126,6 +128,7 @@ function transferToForm(t: Transfer): FormState {
     amount: t.amount,
     currency: t.currency,
     fee: t.fee ?? '',
+    value: t.value ?? '',
     date: t.date.slice(0, 10),
     note: t.note ?? '',
   }
@@ -138,6 +141,7 @@ function formToCreate(f: FormState): TransferCreate {
     amount: f.amount.trim(),
     currency: f.currency.trim().toUpperCase(),
     fee: f.fee.trim() || null,
+    value: f.value.trim() || null,
     date: f.date,
     note: f.note.trim() || null,
   }
@@ -150,6 +154,7 @@ function formToUpdate(f: FormState): TransferUpdate {
     amount: f.amount.trim(),
     currency: f.currency.trim().toUpperCase(),
     fee: f.fee.trim() || null,
+    value: f.value.trim() || null,
     date: f.date,
     note: f.note.trim() || null,
   }
@@ -170,6 +175,7 @@ interface TransferFormProps {
 function TransferForm({ initial, isPending, onSubmit, onCancel, submitLabel }: TransferFormProps) {
   const [form, setForm] = useState<FormState>(initial)
   const { data: accounts = [] } = useAccounts()
+  const { user } = useAuth()
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -224,17 +230,23 @@ function TransferForm({ initial, isPending, onSubmit, onCancel, submitLabel }: T
         </div>
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Currency <span className="text-rose-500">*</span>
+            Currency / Asset <span className="text-rose-500">*</span>
           </label>
-          <input value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} placeholder="EUR" maxLength={10} className={inputCls + ' font-mono uppercase'} />
+          <input value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} placeholder="EUR, BTC, ADA…" maxLength={10} className={inputCls + ' font-mono uppercase'} />
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
             Fee <span className="text-slate-400 font-normal">(optional)</span>
           </label>
           <input value={form.fee} onChange={(e) => set('fee', e.target.value)} placeholder="0.00" className={inputCls + ' font-mono'} inputMode="decimal" />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+            Value {user?.base_currency ? `(${user.base_currency})` : ''} <span className="text-slate-400 font-normal">(optional)</span>
+          </label>
+          <input value={form.value} onChange={(e) => set('value', e.target.value)} placeholder="for crypto P&L" className={inputCls + ' font-mono'} inputMode="decimal" />
         </div>
         <div className="space-y-1">
           <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -286,6 +298,9 @@ export function TransfersPage() {
 
   const { data: transfers = [], isLoading } = useTransfers()
   const { data: accounts = [] } = useAccounts()
+  // Keep a ref so accessorFn always reads latest accounts without requiring columns to rememo
+  const accountsRef = useRef(accounts)
+  accountsRef.current = accounts
   const createTransfer = useCreateTransfer()
   const updateTransfer = useUpdateTransfer()
   const deleteTransfer = useDeleteTransfer()
@@ -315,7 +330,7 @@ export function TransfersPage() {
 
   function accountName(id: number | null): string {
     if (id === null) return 'External'
-    return accounts.find((a) => a.id === id)?.name ?? `#${id}`
+    return accountsRef.current.find((a) => a.id === id)?.name ?? `#${id}`
   }
 
   function handleCreate(form: FormState) {
@@ -523,20 +538,29 @@ export function TransfersPage() {
           )}
         </AnimatePresence>
 
-        {/* Delete confirmation */}
+        {/* Delete confirmation — fixed, centered overlay so it's always visible */}
         <AnimatePresence>
           {deleteId !== null && (
             <motion.div
-              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="flex items-center gap-3 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 px-4 py-3"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+              onClick={() => setDeleteId(null)}
             >
-              <p className="flex-1 text-sm text-rose-700 dark:text-rose-400">Delete this transfer? This cannot be undone.</p>
-              <button onClick={handleDelete} disabled={deleteTransfer.isPending} className="rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium px-3 py-1.5 transition-colors">
-                {deleteTransfer.isPending ? 'Deleting…' : 'Delete'}
-              </button>
-              <button onClick={() => setDeleteId(null)} className="rounded-lg border border-border text-xs font-medium px-3 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-muted transition-colors">
-                Cancel
-              </button>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-sm rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-5 shadow-xl"
+              >
+                <p className="text-sm text-rose-700 dark:text-rose-400">Delete this transfer? This cannot be undone.</p>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <button onClick={() => setDeleteId(null)} className="rounded-lg border border-border text-xs font-medium px-3 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-muted transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={handleDelete} disabled={deleteTransfer.isPending} className="rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-xs font-medium px-3 py-1.5 transition-colors">
+                    {deleteTransfer.isPending ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>

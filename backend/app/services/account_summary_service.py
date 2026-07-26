@@ -1,14 +1,16 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import date
 from decimal import Decimal
 
 from sqlmodel import Session, select
 
 from app.models.account import Account
-from app.models.asset import PriceCache
+from app.models.asset import Asset, PriceCache
 from app.models.trade import Trade
 from app.models.transfer import Transfer
-from app.services.price_fetcher import get_fx_rate
+from app.services.price_fetcher import get_historical_fx_rate
+
+_TOL = Decimal("0.0000001")
 
 
 @dataclass
@@ -28,83 +30,126 @@ class AccountSummaryRow:
 def compute_account_summaries(
     user_id: int, session: Session, base_currency: str
 ) -> list[AccountSummaryRow]:
+    """Per-account P&L using a flow model.
+
+    Trades are internal conversions (they only move quantities within an
+    account). Every inflow (external deposit / transfer in) and outflow
+    (external withdrawal / transfer out) is valued in the base currency at the
+    time it happened. An account's P&L is then::
+
+        P&L = current_value - inflows + outflows
+
+    so an emptied account still shows the realized gain/loss from crypto it
+    held and transferred out (transfer out valued above its entry value = gain).
+    Current value uses the latest available price for each asset (consistent
+    with the Holdings page).
+    """
+    base = base_currency.upper()
     accounts = list(session.exec(select(Account).where(Account.user_id == user_id)).all())
     trades = sorted(
         session.exec(select(Trade).where(Trade.user_id == user_id)).all(),
-        key=lambda t: t.date,
+        key=lambda t: (t.date, t.id or 0),
     )
     transfers = list(session.exec(select(Transfer).where(Transfer.user_id == user_id)).all())
 
-    today = datetime.now(UTC).date()
-    all_asset_ids = list({t.asset_id for t in trades})
-    price_map: dict[int, Decimal] = {}
-    if all_asset_ids:
-        price_rows = session.exec(
+    assets_by_id = {
+        a.id: a
+        for a in session.exec(select(Asset).where(Asset.user_id == user_id)).all()
+        if a.id is not None
+    }
+    assets_by_sym = {a.symbol.upper(): a for a in assets_by_id.values()}
+
+    # Latest available price per asset (max date in PriceCache).
+    latest_price: dict[int, Decimal] = {}
+    latest_date: dict[int, date] = {}
+    if assets_by_id:
+        for p in session.exec(
             select(PriceCache).where(
-                PriceCache.asset_id.in_(all_asset_ids),  # type: ignore[attr-defined]
-                PriceCache.date == today,
+                PriceCache.asset_id.in_(list(assets_by_id))  # type: ignore[attr-defined]
             )
-        ).all()
-        price_map = {p.asset_id: p.price_in_base_currency for p in price_rows}
+        ).all():
+            if p.asset_id not in latest_date or p.date > latest_date[p.asset_id]:
+                latest_date[p.asset_id] = p.date
+                latest_price[p.asset_id] = p.price_in_base_currency
 
-    # Fetch each unique live FX rate once for the entire computation
-    fx_cache: dict[str, Decimal | None] = {}
+    def price_of(asset_id: int) -> Decimal | None:
+        a = assets_by_id.get(asset_id)
+        if a is not None and a.symbol.upper() == base:
+            return Decimal(1)
+        return latest_price.get(asset_id)
 
-    def cached_fx(from_currency: str) -> Decimal | None:
-        key = from_currency.upper()
-        if key not in fx_cache:
-            fx_cache[key] = get_fx_rate(key, base_currency)
-        return fx_cache[key]
+    def unit_value(asset: Asset | None, d: date) -> Decimal | None:
+        """Base-currency value of one unit of asset on date d."""
+        if asset is None:
+            return Decimal(1)  # unknown symbol — assume base currency
+        if asset.symbol.upper() == base:
+            return Decimal(1)
+        if asset.asset_type_id == 7:  # fiat: use historical FX
+            fx = get_historical_fx_rate(asset.symbol, base, d, session)
+            return fx if fx is not None else price_of(asset.id or -1)
+        return price_of(asset.id or -1)
+
+    def transfer_value(t: Transfer, asset: Asset | None) -> Decimal:
+        if t.value is not None:
+            return t.value
+        uv = unit_value(asset, t.date)
+        return t.amount * uv if uv is not None else Decimal(0)
 
     result: list[AccountSummaryRow] = []
     for account in accounts:
         assert account.id is not None
-        account_trades = [t for t in trades if t.account_id == account.id]
-
         qty: dict[int, Decimal] = {}
-        cost: dict[int, Decimal] = {}
-        for trade in account_trades:
-            aid = trade.asset_id
-            qty.setdefault(aid, Decimal(0))
-            cost.setdefault(aid, Decimal(0))
-            trade_value = trade.quantity * trade.price_per_unit
-            if trade.currency.upper() != base_currency.upper():
-                fx = cached_fx(trade.currency)
-                if fx:
-                    trade_value *= fx
-            if trade.operation == "BUY":
-                qty[aid] += trade.quantity
-                cost[aid] += trade_value
-            else:
-                avg = cost[aid] / qty[aid] if qty[aid] > 0 else Decimal(0)
-                qty[aid] -= trade.quantity
-                cost[aid] -= avg * trade.quantity
-                qty[aid] = max(qty[aid], Decimal(0))
-                cost[aid] = max(cost[aid], Decimal(0))
-
+        inflows = Decimal(0)
+        outflows = Decimal(0)
         cash_deposited = Decimal(0)
         cash_withdrawn = Decimal(0)
-        for t in transfers:
-            amt = t.amount
-            if t.currency.upper() != base_currency.upper():
-                fx = cached_fx(t.currency)
-                if fx:
-                    amt = t.amount * fx
-            if t.to_account_id == account.id:
-                cash_deposited += amt
-            if t.from_account_id == account.id:
-                cash_withdrawn += amt
 
-        total_invested = sum(cost.values(), Decimal(0))
-        total_value = sum(
-            (net_qty * price_map.get(aid, Decimal(0))
-             for aid, net_qty in qty.items()
-             if net_qty > 0),
-            Decimal(0),
-        )
-        total_pnl = total_value - total_invested
-        total_pnl_pct = (total_pnl / total_invested * 100) if total_invested else None
-        num_assets = sum(1 for q in qty.values() if q > 0)
+        for t in transfers:
+            asset = assets_by_sym.get(t.currency.upper())
+            val = transfer_value(t, asset)
+            if t.to_account_id == account.id:
+                inflows += val
+                if t.from_account_id is None:
+                    cash_deposited += val
+                if asset and asset.id is not None:
+                    qty[asset.id] = qty.get(asset.id, Decimal(0)) + t.amount
+            if t.from_account_id == account.id:
+                fee_val = (
+                    t.fee * (unit_value(asset, t.date) or Decimal(0))
+                    if t.fee
+                    else Decimal(0)
+                )
+                outflows += val + fee_val
+                if t.to_account_id is None:
+                    cash_withdrawn += val
+                if asset and asset.id is not None:
+                    qty[asset.id] = (
+                        qty.get(asset.id, Decimal(0)) - t.amount - (t.fee or Decimal(0))
+                    )
+
+        for trade in trades:
+            if trade.account_id != account.id:
+                continue
+            qty[trade.from_asset_id] = qty.get(trade.from_asset_id, Decimal(0)) - trade.from_amount
+            qty[trade.to_asset_id] = qty.get(trade.to_asset_id, Decimal(0)) + trade.to_amount
+            if trade.fee_amount and trade.fee_asset_id:
+                qty[trade.fee_asset_id] = (
+                    qty.get(trade.fee_asset_id, Decimal(0)) - trade.fee_amount
+                )
+
+        total_value = Decimal(0)
+        num_assets = 0
+        for aid, q in qty.items():
+            if q <= _TOL:
+                continue
+            num_assets += 1
+            p = price_of(aid)
+            if p is not None:
+                total_value += q * p
+
+        total_pnl = total_value - inflows + outflows
+        total_invested = inflows - outflows
+        total_pnl_pct = (total_pnl / inflows * 100) if inflows > 0 else None
 
         result.append(AccountSummaryRow(
             account_id=account.id,

@@ -23,6 +23,7 @@ interface Account {
   id: number
   name: string
   type: string
+  fiat_enabled: boolean
 }
 
 interface AssetType {
@@ -168,9 +169,11 @@ function AccountsSection() {
   const [editId, setEditId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState<AccountType>('broker')
+  const [editFiatEnabled, setEditFiatEnabled] = useState(false)
   const [addingRow, setAddingRow] = useState(false)
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState<AccountType>('broker')
+  const [newFiatEnabled, setNewFiatEnabled] = useState(false)
   const [deleteId, setDeleteId] = useState<number | null>(null)
 
   const { data: accounts = [], isLoading } = useQuery<Account[]>({
@@ -179,18 +182,19 @@ function AccountsSection() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; type: string }) =>
+    mutationFn: (body: { name: string; type: string; fiat_enabled: boolean }) =>
       api.post('/accounts', body).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
       setAddingRow(false)
       setNewName('')
       setNewType('broker')
+      setNewFiatEnabled(false)
     },
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: { name: string; type: string } }) =>
+    mutationFn: ({ id, body }: { id: number; body: { name: string; type: string; fiat_enabled: boolean } }) =>
       api.patch(`/accounts/${id}`, body).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
@@ -210,6 +214,7 @@ function AccountsSection() {
     setEditId(account.id)
     setEditName(account.name)
     setEditType(account.type as AccountType)
+    setEditFiatEnabled(account.fiat_enabled)
   }
 
   function cancelEdit() {
@@ -217,7 +222,7 @@ function AccountsSection() {
   }
 
   function saveEdit(id: number) {
-    updateMutation.mutate({ id, body: { name: editName, type: editType } })
+    updateMutation.mutate({ id, body: { name: editName, type: editType, fiat_enabled: editFiatEnabled } })
   }
 
   function confirmDelete(id: number) {
@@ -280,20 +285,21 @@ function AccountsSection() {
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
               <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Type</th>
+              <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">FIAT</th>
               <th className="px-4 py-2.5 w-20" />
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
+                <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             )}
             {!isLoading && accounts.length === 0 && !addingRow && (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
+                <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground">
                   No accounts yet.
                 </td>
               </tr>
@@ -322,6 +328,15 @@ function AccountsSection() {
                       ))}
                     </select>
                   </td>
+                  <td className="px-4 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={editFiatEnabled}
+                      onChange={(e) => setEditFiatEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-accent-500 cursor-pointer"
+                      aria-label="FIAT enabled"
+                    />
+                  </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-1">
                       <button
@@ -343,6 +358,13 @@ function AccountsSection() {
                   <td className="px-4 py-3 text-slate-800 dark:text-slate-100">{account.name}</td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-400 capitalize">
                     {account.type}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {account.fiat_enabled ? (
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" title="FIAT enabled" />
+                    ) : (
+                      <span className="inline-block w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600" title="FIAT disabled" />
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
@@ -391,11 +413,20 @@ function AccountsSection() {
                     ))}
                   </select>
                 </td>
+                <td className="px-4 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    checked={newFiatEnabled}
+                    onChange={(e) => setNewFiatEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-accent-500 cursor-pointer"
+                    aria-label="FIAT enabled"
+                  />
+                </td>
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() =>
-                        createMutation.mutate({ name: newName, type: newType })
+                        createMutation.mutate({ name: newName, type: newType, fiat_enabled: newFiatEnabled })
                       }
                       disabled={!newName.trim() || createMutation.isPending}
                       className={iconBtn + ' text-emerald-600 dark:text-emerald-400'}
@@ -407,6 +438,7 @@ function AccountsSection() {
                       onClick={() => {
                         setAddingRow(false)
                         setNewName('')
+                        setNewFiatEnabled(false)
                       }}
                       className={iconBtn}
                       aria-label="Cancel"

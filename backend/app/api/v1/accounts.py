@@ -33,7 +33,7 @@ class AccountSummaryRead(BaseModel):
         "cash_deposited", "cash_withdrawn",
     )
     def serialize_decimal(self, v: Decimal | None) -> str | None:
-        return str(v) if v is not None else None
+        return format(v.normalize(), "f") if v is not None else None
 
 
 @router.get("/summary", response_model=list[AccountSummaryRead])
@@ -62,7 +62,7 @@ def create_account(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> Account:
-    account = Account(user_id=current_user.id, name=body.name, type=body.type)
+    account = Account(user_id=current_user.id, name=body.name, type=body.type, fiat_enabled=body.fiat_enabled)
     session.add(account)
     session.commit()
     session.refresh(account)
@@ -83,6 +83,8 @@ def update_account(
         account.name = body.name
     if body.type is not None:
         account.type = body.type
+    if body.fiat_enabled is not None:
+        account.fiat_enabled = body.fiat_enabled
     session.add(account)
     session.commit()
     session.refresh(account)

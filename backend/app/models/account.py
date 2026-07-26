@@ -6,3 +6,4 @@ class Account(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     name: str
     type: str  # bank, broker, exchange, wallet, other
+    fiat_enabled: bool = Field(default=False)

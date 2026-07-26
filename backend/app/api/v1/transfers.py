@@ -43,6 +43,7 @@ def create_transfer(
         amount=body.amount,
         currency=body.currency,
         fee=body.fee,
+        value=body.value,
         date=body.date,
         note=body.note,
     )

@@ -210,6 +210,12 @@ def fetch_and_cache_price(asset: Asset, user: User, session: Session) -> Decimal
         price = fetch_yfinance_price(asset.external_id, user.base_currency)
     elif source == "custom":
         price = get_custom_price(asset.id, today, session)  # type: ignore[arg-type]
+    elif source == "fx":
+        # FIAT currency — price is the FX rate to base_currency
+        if asset.symbol.upper() == user.base_currency.upper():
+            price = Decimal("1")
+        else:
+            price = get_fx_rate(asset.symbol, user.base_currency)
     # source == "none" -> price stays None
 
     if price is not None:
@@ -327,6 +333,60 @@ def _backfill_yfinance(
         return []
 
 
+def _backfill_fx(
+    asset: Asset, base_currency: str, days: int, session: Session
+) -> int:
+    """Populate PriceCache from FxRateCache / Frankfurter for a FIAT (fx) asset."""
+    from datetime import timedelta
+
+    if asset.symbol.upper() == base_currency.upper():
+        # Always 1:1 — just insert one row for today
+        today = datetime.now(UTC).date()
+        existing = session.exec(
+            select(PriceCache).where(
+                PriceCache.asset_id == asset.id, PriceCache.date == today
+            )
+        ).first()
+        if not existing:
+            session.add(PriceCache(asset_id=asset.id, date=today, price_in_base_currency=Decimal("1")))
+            session.commit()
+            return 1
+        return 0
+
+    today = datetime.now(UTC).date()
+    cutoff = today - timedelta(days=days)
+    existing: set[date] = {
+        p.date
+        for p in session.exec(
+            select(PriceCache).where(PriceCache.asset_id == asset.id)
+        ).all()
+    }
+
+    count = 0
+    current = cutoff
+    while current <= today:
+        if current not in existing:
+            rate = get_historical_fx_rate(asset.symbol, base_currency, current, session)
+            if rate is not None:
+                session.add(
+                    PriceCache(asset_id=asset.id, date=current, price_in_base_currency=rate)
+                )
+                count += 1
+                # Commit in batches to avoid large transactions
+                if count % 50 == 0:
+                    session.commit()
+            time.sleep(0.1)  # respect Frankfurter rate limits
+        current += timedelta(days=1)
+
+    if count % 50 != 0:
+        session.commit()
+
+    logger.info(
+        "Backfilled %d FX price rows for asset %s (id=%s)", count, asset.symbol, asset.id
+    )
+    return count
+
+
 def backfill_price_history(
     asset: Asset, user: User, session: Session, days: int = 365
 ) -> int:
@@ -334,6 +394,9 @@ def backfill_price_history(
     Fetch and insert historical daily prices for an asset into PriceCache.
     Skips dates already cached. Returns the number of new rows inserted.
     """
+    if asset.price_source == "fx":
+        return _backfill_fx(asset, user.base_currency, days, session)
+
     if asset.price_source not in ("binance", "yfinance") or not asset.external_id:
         return 0
 

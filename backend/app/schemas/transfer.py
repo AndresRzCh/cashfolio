@@ -10,6 +10,7 @@ class TransferCreate(BaseModel):
     amount: Decimal
     currency: str
     fee: Decimal | None = None
+    value: Decimal | None = None
     date: datetime.date
     note: str | None = None
 
@@ -40,6 +41,7 @@ class TransferUpdate(BaseModel):
     amount: Decimal | None = None
     currency: str | None = None
     fee: Decimal | None = None
+    value: Decimal | None = None
     date: datetime.date | None = None
     note: str | None = None
 
@@ -66,11 +68,12 @@ class TransferRead(BaseModel):
     amount: Decimal
     currency: str
     fee: Decimal | None
+    value: Decimal | None
     date: datetime.date
     note: str | None
 
     model_config = {"from_attributes": True}
 
-    @field_serializer("amount", "fee")
+    @field_serializer("amount", "fee", "value")
     def serialize_decimal(self, v: Decimal | None) -> str | None:
-        return str(v.normalize()) if v is not None else None
+        return format(v.normalize(), "f") if v is not None else None

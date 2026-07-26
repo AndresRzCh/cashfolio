@@ -6,6 +6,7 @@ ACCOUNT_TYPES = {"bank", "broker", "exchange", "wallet", "other"}
 class AccountCreate(BaseModel):
     name: str
     type: str
+    fiat_enabled: bool = False
 
     @field_validator("type")
     @classmethod
@@ -18,6 +19,7 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str | None = None
     type: str | None = None
+    fiat_enabled: bool | None = None
 
     @field_validator("type")
     @classmethod
@@ -32,5 +34,6 @@ class AccountRead(BaseModel):
     user_id: int
     name: str
     type: str
+    fiat_enabled: bool
 
     model_config = {"from_attributes": True}

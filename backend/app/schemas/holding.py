@@ -5,7 +5,25 @@ from pydantic import BaseModel, field_serializer
 
 
 def _d(v: Decimal | None) -> str | None:
-    return str(v) if v is not None else None
+    # format(..., "f") avoids scientific notation (e.g. "5E+2"); normalize trims
+    # trailing zeros (500.0000000000 -> 500).
+    return format(v.normalize(), "f") if v is not None else None
+
+
+class AccountHoldingRowRead(BaseModel):
+    account_id: int
+    account_name: str
+    net_quantity: Decimal
+    cost_basis: Decimal
+    current_value: Decimal | None
+    unrealized_pnl: Decimal | None
+    unrealized_pnl_pct: Decimal | None
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("net_quantity", "cost_basis", "current_value", "unrealized_pnl", "unrealized_pnl_pct")
+    def serialize_decimal(self, v: Decimal | None) -> str | None:
+        return _d(v)
 
 
 class HoldingRowRead(BaseModel):
@@ -20,6 +38,7 @@ class HoldingRowRead(BaseModel):
     current_value: Decimal | None
     unrealized_pnl: Decimal | None
     unrealized_pnl_pct: Decimal | None
+    accounts: list[AccountHoldingRowRead] = []
 
     model_config = {"from_attributes": True}
 
@@ -31,12 +50,37 @@ class HoldingRowRead(BaseModel):
         return _d(v)
 
 
+class FiatAccountRowRead(BaseModel):
+    currency: str
+    amount: Decimal
+    cost_basis: Decimal
+    current_value: Decimal | None
+    unrealized_pnl: Decimal | None
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("amount", "cost_basis", "current_value", "unrealized_pnl")
+    def serialize_decimal(self, v: Decimal | None) -> str | None:
+        return _d(v)
+
+
+class AccountFiatSummaryRead(BaseModel):
+    account_id: int
+    account_name: str
+    rows: list[FiatAccountRowRead]
+
+    model_config = {"from_attributes": True}
+
+
 class PortfolioSummaryRead(BaseModel):
     total_cost_basis: Decimal
     total_current_value: Decimal | None
     total_unrealized_pnl: Decimal | None
     total_unrealized_pnl_pct: Decimal | None
     holdings: list[HoldingRowRead]
+    account_fiat: list[AccountFiatSummaryRead] = []
+
+    model_config = {"from_attributes": True}
 
     @field_serializer(
         "total_cost_basis", "total_current_value",

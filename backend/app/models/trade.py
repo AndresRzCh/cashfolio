@@ -9,14 +9,13 @@ class Trade(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     account_id: int = Field(foreign_key="account.id")
-    operation: str  # "BUY" or "SELL"
-    asset_id: int = Field(foreign_key="asset.id")
-    quantity: Decimal = Field(sa_column=Column(sa.Numeric(28, 10), nullable=False))
-    price_per_unit: Decimal = Field(sa_column=Column(sa.Numeric(28, 10), nullable=False))
-    currency: str
-    fee: Decimal | None = Field(
+    from_asset_id: int = Field(foreign_key="asset.id")
+    from_amount: Decimal = Field(sa_column=Column(sa.Numeric(28, 10), nullable=False))
+    to_asset_id: int = Field(foreign_key="asset.id")
+    to_amount: Decimal = Field(sa_column=Column(sa.Numeric(28, 10), nullable=False))
+    fee_asset_id: int | None = Field(default=None, foreign_key="asset.id")
+    fee_amount: Decimal | None = Field(
         default=None, sa_column=Column(sa.Numeric(28, 10), nullable=True)
     )
-    fee_currency: str | None = None
     date: date
     note: str | None = None

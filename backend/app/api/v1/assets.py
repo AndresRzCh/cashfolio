@@ -179,12 +179,14 @@ def refresh_price(
     today = datetime.now(UTC).date()
 
     # Find the earliest trade date for this asset to determine backfill window
-    earliest_trade = session.exec(
-        select(Trade)
-        .where(Trade.asset_id == asset_id, Trade.user_id == current_user.id)
-        .order_by(Trade.date)  # type: ignore[arg-type]
+    earliest_trade_date = session.exec(
+        select(Trade.date)
+        .where(
+            Trade.user_id == current_user.id,
+            (Trade.from_asset_id == asset_id) | (Trade.to_asset_id == asset_id),  # type: ignore[operator]
+        )
+        .order_by(Trade.date)  # type: ignore[attr-defined]
     ).first()
-    earliest_trade_date = earliest_trade.date if earliest_trade else None
 
     if earliest_trade_date is None:
         count = 0

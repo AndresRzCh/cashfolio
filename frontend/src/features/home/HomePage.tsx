@@ -14,7 +14,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts'
-import { ArrowLeftRight, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowLeftRight, TrendingUp } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { useHoldings } from '../holdings/useHoldings'
@@ -377,9 +377,10 @@ export default function HomePage() {
           kind: 'trade'
           id: number
           date: string
-          operation: 'BUY' | 'SELL'
-          asset_id: number
-          quantity: string
+          from_asset_id: number
+          from_amount: string
+          to_asset_id: number
+          to_amount: string
         }
 
     const items: ActivityItem[] = []
@@ -403,9 +404,10 @@ export default function HomePage() {
         kind: 'trade',
         id: t.id,
         date: t.date,
-        operation: t.operation,
-        asset_id: t.asset_id,
-        quantity: t.quantity,
+        from_asset_id: t.from_asset_id,
+        from_amount: t.from_amount,
+        to_asset_id: t.to_asset_id,
+        to_amount: t.to_amount,
       })
     )
 
@@ -611,20 +613,16 @@ export default function HomePage() {
                     </div>
                   )
                 } else {
-                  const symbol = assetMap.get(item.asset_id) ?? `#${item.asset_id}`
-                  const isBuy = item.operation === 'BUY'
+                  const fromSymbol = assetMap.get(item.from_asset_id) ?? `#${item.from_asset_id}`
+                  const toSymbol = assetMap.get(item.to_asset_id) ?? `#${item.to_asset_id}`
                   return (
                     <div
                       key={`trade-${item.id}`}
                       className="flex items-center gap-3 py-2 border-b border-border last:border-0"
                     >
-                      {isBuy ? (
-                        <TrendingUp className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                      ) : (
-                        <TrendingDown className="w-4 h-4 shrink-0 text-rose-500 dark:text-rose-400" />
-                      )}
+                      <TrendingUp className="w-4 h-4 shrink-0 text-accent-500" />
                       <span className="text-sm text-foreground flex-1 min-w-0 truncate">
-                        {symbol} — {item.operation} {fmtQty(item.quantity)}
+                        {fmtQty(item.from_amount)} {fromSymbol} → {fmtQty(item.to_amount)} {toSymbol}
                       </span>
                       <span className="text-xs text-muted-foreground shrink-0">
                         {item.date.slice(0, 10)}
