@@ -5,12 +5,15 @@ Fetches current prices from external APIs.
 Never call these from hot-path request handlers — use the scheduler or
 the explicit on-demand refresh endpoint only.
 """
+import bisect
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models.asset import Asset, CustomPrice, PriceCache
@@ -113,6 +116,87 @@ def get_historical_fx_rate(
         session.rollback()
 
     return rate
+
+
+def get_fx_series(
+    from_currency: str,
+    to_currency: str,
+    start: date,
+    end: date,
+    session: Session,
+) -> Callable[[date], Decimal | None]:
+    """
+    Build a day -> rate lookup for a whole date range in one request.
+
+    Backfills must value each historical price with the rate of *that* day. Asking
+    get_historical_fx_rate per day would be thousands of round trips, so this pulls
+    the range in one call and carries the last known rate forward over weekends and
+    holidays. Returns a lookup that yields None only when no rate could be had.
+    """
+    from_up = from_currency.upper()
+    to_up = to_currency.upper()
+    if from_up == to_up:
+        return lambda _d: Decimal("1")
+
+    rates: dict[date, Decimal] = {
+        r.date: r.rate
+        for r in session.exec(
+            select(FxRateCache).where(
+                FxRateCache.from_currency == from_up,
+                FxRateCache.to_currency == to_up,
+                FxRateCache.date >= start,
+                FxRateCache.date <= end,
+            )
+        ).all()
+    }
+
+    try:
+        with httpx.Client(timeout=60) as client:
+            r = client.get(
+                f"https://api.frankfurter.dev/v1/{start}..{end}",
+                params={"from": from_up, "to": to_up},
+            )
+            r.raise_for_status()
+            fetched = r.json().get("rates", {})
+    except Exception as exc:
+        logger.warning(
+            "Frankfurter range fetch failed (%s -> %s, %s..%s): %s",
+            from_up, to_up, start, end, exc,
+        )
+        fetched = {}
+
+    added = 0
+    for day, values in fetched.items():
+        try:
+            parsed = date.fromisoformat(day)
+        except ValueError:
+            continue
+        rate = _safe_decimal(values.get(to_up))
+        if rate is None or parsed in rates:
+            continue
+        rates[parsed] = rate
+        session.add(
+            FxRateCache(
+                from_currency=from_up, to_currency=to_up, date=parsed, rate=rate
+            )
+        )
+        added += 1
+    if added:
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+
+    ordered = sorted(rates)
+
+    def at(d: date) -> Decimal | None:
+        if not ordered:
+            return None
+        idx = bisect.bisect_right(ordered, d) - 1
+        # Before the first published rate, the earliest one is the best guess.
+        return rates[ordered[idx]] if idx >= 0 else rates[ordered[0]]
+
+    return at
 
 
 # ── Binance ───────────────────────────────────────────────────────────────────
@@ -223,8 +307,11 @@ def fetch_and_cache_price(asset: Asset, user: User, session: Session) -> Decimal
             asset_id=asset.id, date=today, price_in_base_currency=price
         )
         session.add(entry)
-        session.commit()
-        session.refresh(entry)
+        try:
+            session.commit()
+        except IntegrityError:
+            # A concurrent refresh already cached today; the unique index caught it.
+            session.rollback()
 
     return price
 
@@ -232,7 +319,7 @@ def fetch_and_cache_price(asset: Asset, user: User, session: Session) -> Decimal
 # ── Historical backfill ────────────────────────────────────────────────────────
 
 def _backfill_binance(
-    symbol: str, base_currency: str, days: int
+    symbol: str, base_currency: str, days: int, session: Session
 ) -> list[tuple[date, Decimal]]:
     """Fetch daily close prices from Binance klines. Paginates in 1000-day chunks."""
     from datetime import timedelta
@@ -241,15 +328,13 @@ def _backfill_binance(
     today = datetime.now(UTC).date()
     cutoff = today - timedelta(days=days)
 
-    fx = Decimal("1")
-    if base_currency.upper() != "USD":
-        rate = get_fx_rate("USD", base_currency)
-        if rate is None:
-            logger.warning(
-                "Binance backfill: could not get FX rate USD->%s, aborting", base_currency
-            )
-            return []
-        fx = rate
+    # Each close is worth what it was worth that day, not what it is worth now.
+    fx_at = get_fx_series("USD", base_currency, cutoff, today, session)
+    if fx_at(today) is None:
+        logger.warning(
+            "Binance backfill: no FX rates USD->%s, aborting", base_currency
+        )
+        return []
 
     by_date: dict[date, Decimal] = {}
     chunk_start = cutoff
@@ -283,7 +368,9 @@ def _backfill_binance(
                     close_price = _safe_decimal(candle[4])
                     if close_price is not None:
                         d = datetime.fromtimestamp(close_time_ms / 1000, tz=UTC).date()
-                        by_date[d] = close_price * fx
+                        rate = fx_at(d)
+                        if rate is not None:
+                            by_date[d] = close_price * rate
         except Exception as exc:
             logger.warning(
                 "Binance backfill chunk %s–%s failed for %s: %s",
@@ -298,7 +385,7 @@ def _backfill_binance(
 
 
 def _backfill_yfinance(
-    ticker_symbol: str, base_currency: str, days: int
+    ticker_symbol: str, base_currency: str, days: int, session: Session
 ) -> list[tuple[date, Decimal]]:
     """Fetch daily Close price history from yfinance."""
     try:
@@ -314,19 +401,18 @@ def _backfill_yfinance(
             return []
         info = ticker.fast_info
         asset_currency = (getattr(info, "currency", None) or base_currency).upper()
-        fx = Decimal("1")
-        if asset_currency != base_currency.upper():
-            rate = get_fx_rate(asset_currency, base_currency)
-            if rate is None:
-                return []
-            fx = rate
+        # Each close is worth what it was worth that day, not what it is worth now.
+        fx_at = get_fx_series(asset_currency, base_currency, start, end, session)
+        if fx_at(end) is None:
+            return []
         result: list[tuple[date, Decimal]] = []
         for idx, row in hist.iterrows():
             d = idx.date() if hasattr(idx, "date") else idx
             close = row.get("Close") or row.get("close")
             price = _safe_decimal(close)
-            if price is not None:
-                result.append((d, price * fx))
+            rate = fx_at(d) if price is not None else None
+            if price is not None and rate is not None:
+                result.append((d, price * rate))
         return result
     except Exception as exc:
         logger.warning("yfinance backfill failed for %s: %s", ticker_symbol, exc)
@@ -339,23 +425,33 @@ def _backfill_fx(
     """Populate PriceCache from FxRateCache / Frankfurter for a FIAT (fx) asset."""
     from datetime import timedelta
 
-    if asset.symbol.upper() == base_currency.upper():
-        # Always 1:1 — just insert one row for today
-        today = datetime.now(UTC).date()
-        existing = session.exec(
-            select(PriceCache).where(
-                PriceCache.asset_id == asset.id, PriceCache.date == today
-            )
-        ).first()
-        if not existing:
-            session.add(PriceCache(asset_id=asset.id, date=today, price_in_base_currency=Decimal("1")))
-            session.commit()
-            return 1
-        return 0
-
     today = datetime.now(UTC).date()
+    if asset.symbol.upper() == base_currency.upper():
+        # Always 1:1, but fill the whole window so every held day has a price.
+        cutoff = today - timedelta(days=days)
+        existing = {
+            p.date
+            for p in session.exec(
+                select(PriceCache).where(PriceCache.asset_id == asset.id)
+            ).all()
+        }
+        count = 0
+        current = cutoff
+        while current <= today:
+            if current not in existing:
+                session.add(
+                    PriceCache(
+                        asset_id=asset.id, date=current, price_in_base_currency=Decimal("1")
+                    )
+                )
+                count += 1
+            current += timedelta(days=1)
+        if count:
+            session.commit()
+        return count
+
     cutoff = today - timedelta(days=days)
-    existing: set[date] = {
+    existing = {
         p.date
         for p in session.exec(
             select(PriceCache).where(PriceCache.asset_id == asset.id)
@@ -408,9 +504,9 @@ def backfill_price_history(
     }
 
     if asset.price_source == "binance":
-        points = _backfill_binance(asset.external_id, user.base_currency, days)
+        points = _backfill_binance(asset.external_id, user.base_currency, days, session)
     else:
-        points = _backfill_yfinance(asset.external_id, user.base_currency, days)
+        points = _backfill_yfinance(asset.external_id, user.base_currency, days, session)
 
     count = 0
     for d, price in points:

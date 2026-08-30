@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlmodel import Session, select
 
+from app.core.constants import FIAT_TYPE_ID
 from app.models.account import Account
 from app.models.asset import Asset, PriceCache
 from app.models.trade import Trade
@@ -84,7 +85,7 @@ def compute_account_summaries(
             return Decimal(1)  # unknown symbol — assume base currency
         if asset.symbol.upper() == base:
             return Decimal(1)
-        if asset.asset_type_id == 7:  # fiat: use historical FX
+        if asset.asset_type_id == FIAT_TYPE_ID:  # cash: use historical FX
             fx = get_historical_fx_rate(asset.symbol, base, d, session)
             return fx if fx is not None else price_of(asset.id or -1)
         return price_of(asset.id or -1)

@@ -5,8 +5,7 @@ from pydantic import BaseModel, field_serializer
 
 
 def _d(v: Decimal | None) -> str | None:
-    # format(..., "f") avoids scientific notation (e.g. "5E+2"); normalize trims
-    # trailing zeros (500.0000000000 -> 500).
+    # "f" avoids scientific notation; normalize trims trailing zeros.
     return format(v.normalize(), "f") if v is not None else None
 
 
@@ -79,12 +78,13 @@ class PortfolioSummaryRead(BaseModel):
     total_unrealized_pnl_pct: Decimal | None
     holdings: list[HoldingRowRead]
     account_fiat: list[AccountFiatSummaryRead] = []
+    total_net_deposits: Decimal = Decimal(0)
 
     model_config = {"from_attributes": True}
 
     @field_serializer(
         "total_cost_basis", "total_current_value",
-        "total_unrealized_pnl", "total_unrealized_pnl_pct",
+        "total_unrealized_pnl", "total_unrealized_pnl_pct", "total_net_deposits",
     )
     def serialize_decimal(self, v: Decimal | None) -> str | None:
         return _d(v)

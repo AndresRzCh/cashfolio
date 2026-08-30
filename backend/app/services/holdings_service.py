@@ -8,6 +8,7 @@ from app.models.account import Account
 from app.models.asset import Asset, PriceCache
 from app.models.trade import Trade
 from app.models.transfer import Transfer
+from app.core.constants import FIAT_TYPE_ID
 from app.services.price_fetcher import get_historical_fx_rate
 
 
@@ -62,6 +63,7 @@ class PortfolioSummary:
     total_unrealized_pnl_pct: Decimal | None
     holdings: list[HoldingRow]
     account_fiat: list[AccountFiatSummary] = field(default_factory=list)
+    total_net_deposits: Decimal = Decimal(0)
 
 
 def _get_latest_price(
@@ -159,9 +161,8 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
                 )
         from_value = trade.from_amount * from_price if from_price else Decimal(0)
 
-        # Reduce from_asset proportionally
-        total_from_qty = qty[fa] + trade.from_amount
-        avg_from_cost = cost[fa] / total_from_qty if total_from_qty > 0 else Decimal(0)
+        # Average over the quantity held before the trade, not after.
+        avg_from_cost = cost[fa] / qty[fa] if qty[fa] > 0 else Decimal(0)
         cost[fa] -= avg_from_cost * trade.from_amount
         qty[fa] -= trade.from_amount
         qty[fa] = max(qty[fa], Decimal(0))
@@ -176,8 +177,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
             fea = trade.fee_asset_id
             qty.setdefault(fea, Decimal(0))
             cost.setdefault(fea, Decimal(0))
-            total_fee_qty = qty[fea] + trade.fee_amount
-            avg_fee_cost = cost[fea] / total_fee_qty if total_fee_qty > 0 else Decimal(0)
+            avg_fee_cost = cost[fea] / qty[fea] if qty[fea] > 0 else Decimal(0)
             cost[fea] -= avg_fee_cost * trade.fee_amount
             qty[fea] -= trade.fee_amount
             qty[fea] = max(qty[fea], Decimal(0))
@@ -192,8 +192,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
         acc_cost.setdefault(k_from, Decimal(0))
         acc_cost.setdefault(k_to, Decimal(0))
 
-        total_from_acc = acc_qty[k_from] + trade.from_amount
-        avg_from_acc = acc_cost[k_from] / total_from_acc if total_from_acc > 0 else Decimal(0)
+        avg_from_acc = acc_cost[k_from] / acc_qty[k_from] if acc_qty[k_from] > 0 else Decimal(0)
         acc_cost[k_from] -= avg_from_acc * trade.from_amount
         acc_qty[k_from] -= trade.from_amount
         acc_qty[k_from] = max(acc_qty[k_from], Decimal(0))
@@ -207,16 +206,14 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
             k_fee = (acct, fea)
             acc_qty.setdefault(k_fee, Decimal(0))
             acc_cost.setdefault(k_fee, Decimal(0))
-            total_fee_acc = acc_qty[k_fee] + trade.fee_amount
-            avg_fee_acc = acc_cost[k_fee] / total_fee_acc if total_fee_acc > 0 else Decimal(0)
+            avg_fee_acc = acc_cost[k_fee] / acc_qty[k_fee] if acc_qty[k_fee] > 0 else Decimal(0)
             acc_cost[k_fee] -= avg_fee_acc * trade.fee_amount
             acc_qty[k_fee] -= trade.fee_amount
             acc_qty[k_fee] = max(acc_qty[k_fee], Decimal(0))
             acc_cost[k_fee] = max(acc_cost[k_fee], Decimal(0))
 
     # ── Crypto transfers move quantity + cost basis between accounts ──────────
-    # Global qty/cost are unchanged (the asset still exists in the portfolio);
-    # only the per-account breakdown shifts. Cost basis follows the asset.
+    # Global qty/cost are unchanged; only the per-account breakdown shifts.
     sym_to_asset_id = {
         a.symbol.upper(): aid for aid, a in assets.items()
     }
@@ -225,7 +222,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
         if aid is None:
             continue
         asset = assets.get(aid)
-        if asset is None or asset.asset_type_id == 7:
+        if asset is None or asset.asset_type_id == FIAT_TYPE_ID:
             continue  # fiat handled separately
         if t.from_account_id is not None:
             k = (t.from_account_id, aid)
@@ -250,7 +247,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
         asset = assets.get(aid)
         if asset is None:
             continue
-        if asset.asset_type_id == 7:  # Fiat currencies live in account_fiat, not global holdings
+        if asset.asset_type_id == FIAT_TYPE_ID:  # cash lives in account_fiat, not here
             continue
 
         cb = cost.get(aid, Decimal(0))
@@ -305,14 +302,12 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
     fiat_accounts = [a for a in accounts.values() if a.fiat_enabled]
     account_fiat: list[AccountFiatSummary] = []
 
-    # Within same date, process trades that receive fiat before trades that spend
-    # fiat — ensures cost basis is tracked correctly when EUR→USD and USD→crypto
-    # happen on the same day but the conversion trade has a higher id.
+    # Same-date fiat-receiving trades sort first, so EUR→USD can fund USD→crypto.
     fiat_sorted_trades = sorted(
         trades,
         key=lambda t: (
             t.date,
-            0 if (assets.get(t.to_asset_id) and assets[t.to_asset_id].asset_type_id == 7) else 1,
+            0 if (assets.get(t.to_asset_id) and assets[t.to_asset_id].asset_type_id == FIAT_TYPE_ID) else 1,
             t.id,
         ),
     )
@@ -321,13 +316,12 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
         fiat_amount: dict[str, Decimal] = {}
         fiat_cost: dict[str, Decimal] = {}
 
-        # Transfers — only fiat currencies count toward the cash section;
-        # crypto transfers are handled in the asset breakdown above.
+        # Only fiat transfers count here; crypto ones are in the breakdown above.
         for t in transfers:
             if t.note == 'traspaso':
                 continue
             t_asset = sym_to_asset_id.get(t.currency.upper())
-            if t_asset is None or assets[t_asset].asset_type_id != 7:
+            if t_asset is None or assets[t_asset].asset_type_id != FIAT_TYPE_ID:
                 continue
             c = t.currency.upper()
             fiat_amount.setdefault(c, Decimal(0))
@@ -352,7 +346,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
                     fiat_amount[c] -= t.fee
                     fiat_cost[c] -= avg_c * t.fee
 
-        # Trades on this account — only track fiat currency assets (asset_type_id == 7)
+        # Trades on this account — only cash assets matter for this section
         for trade in fiat_sorted_trades:
             if trade.account_id != acc.id:
                 continue
@@ -360,7 +354,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
             fa_asset = assets.get(trade.from_asset_id)
             ta_asset = assets.get(trade.to_asset_id)
 
-            if fa_asset and fa_asset.asset_type_id == 7:
+            if fa_asset and fa_asset.asset_type_id == FIAT_TYPE_ID:
                 c = fa_asset.symbol.upper()
                 fiat_amount.setdefault(c, Decimal(0))
                 fiat_cost.setdefault(c, Decimal(0))
@@ -368,7 +362,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
                 fiat_amount[c] -= trade.from_amount
                 fiat_cost[c] -= avg_c * trade.from_amount
 
-            if ta_asset and ta_asset.asset_type_id == 7:
+            if ta_asset and ta_asset.asset_type_id == FIAT_TYPE_ID:
                 c = ta_asset.symbol.upper()
                 fiat_amount.setdefault(c, Decimal(0))
                 fiat_cost.setdefault(c, Decimal(0))
@@ -383,7 +377,7 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
 
             if trade.fee_amount and trade.fee_asset_id:
                 fee_asset = assets.get(trade.fee_asset_id)
-                if fee_asset and fee_asset.asset_type_id == 7:
+                if fee_asset and fee_asset.asset_type_id == FIAT_TYPE_ID:
                     c = fee_asset.symbol.upper()
                     fiat_amount.setdefault(c, Decimal(0))
                     fiat_cost.setdefault(c, Decimal(0))
@@ -419,6 +413,27 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
                 rows=rows,
             ))
 
+    # ── Net deposits ──────────────────────────────────────────────────────────
+    # Internal transfers touch both sides and cancel out on their own.
+    net_deposits = Decimal(0)
+    for t in transfers:
+        aid = sym_to_asset_id.get(t.currency.upper())
+        asset = assets.get(aid) if aid is not None else None
+        unit: Decimal | None = None
+        if asset is not None and asset.id is not None:
+            unit = _get_price_at_date(asset.id, prices_map, t.date)
+            if unit is None and asset.symbol.upper() == base_currency.upper():
+                unit = Decimal(1)
+            if unit is None and asset.asset_type_id == FIAT_TYPE_ID:
+                unit = get_historical_fx_rate(asset.symbol, base_currency, t.date, session)
+        value = t.value if t.value is not None else t.amount * (unit or Decimal(0))
+        if t.to_account_id is not None:
+            net_deposits += value
+        if t.from_account_id is not None:
+            net_deposits -= value
+            if t.fee:
+                net_deposits -= t.fee * (unit or Decimal(0))
+
     # ── Totals ────────────────────────────────────────────────────────────────
     total_cost = sum((h.cost_basis for h in holdings), Decimal(0))
     valued = [h for h in holdings if h.current_value is not None]
@@ -439,4 +454,5 @@ def compute_holdings(user_id: int, session: Session, base_currency: str) -> Port
         total_unrealized_pnl_pct=total_pnl_pct,
         holdings=holdings,
         account_fiat=account_fiat,
+        total_net_deposits=net_deposits,
     )

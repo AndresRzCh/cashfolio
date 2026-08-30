@@ -38,4 +38,5 @@ backend/.env.example
 # Local-only files (personal data, never commit)
 extracto.xlsx
 backend/alembic/versions/001[2-9]_*.py
-backend/alembic/versions/002[0-3]_*.py
+backend/alembic/versions/002[0-5]_*.py
+backend/alembic/versions/002[7-9]_*.py

@@ -14,12 +14,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from app.core.constants import FIAT_TYPE_ID
 from app.models.asset import PriceCache
 
 HOLDINGS_URL = "/api/v1/holdings"
 ACCOUNTS_URL = "/api/v1/accounts"
 ASSETS_URL = "/api/v1/assets"
 TRADES_URL = "/api/v1/trades"
+TRANSFERS_URL = "/api/v1/transfers"
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +29,12 @@ TRADES_URL = "/api/v1/trades"
 # ---------------------------------------------------------------------------
 
 def _create_account(client: TestClient, headers: dict, name: str) -> int:
-    resp = client.post(ACCOUNTS_URL, json={"name": name, "type": "broker"}, headers=headers)
-    assert resp.status_code == 201
+    resp = client.post(
+        ACCOUNTS_URL,
+        json={"name": name, "type": "broker", "fiat_enabled": True},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
@@ -38,42 +44,69 @@ def _create_asset(client: TestClient, headers: dict, symbol: str) -> int:
         json={"symbol": symbol, "name": f"{symbol} Name", "price_source": "none"},
         headers=headers,
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def _cash_asset(client: TestClient, headers: dict, symbol: str = "EUR") -> int:
+    """The currency side of a trade: fiat type, priced by FX (mocked to 1 in tests)."""
+    for a in client.get(ASSETS_URL, headers=headers).json():
+        if a["symbol"] == symbol:
+            return a["id"]
+    resp = client.post(
+        ASSETS_URL,
+        json={
+            "symbol": symbol,
+            "name": symbol,
+            "price_source": "fx",
+            "asset_type_id": FIAT_TYPE_ID,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
 def _buy(client, headers, acct_id, asset_id, qty, price, date="2025-01-01", currency="EUR"):
+    """Deposit exactly what the buy costs, then spend it on the asset."""
+    cash_id = _cash_asset(client, headers, currency)
+    total = str(Decimal(str(qty)) * Decimal(str(price)))
+    resp = client.post(
+        TRANSFERS_URL,
+        json={"to_account_id": acct_id, "amount": total, "currency": currency, "date": date},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
     resp = client.post(
         TRADES_URL,
         json={
             "account_id": acct_id,
-            "operation": "BUY",
-            "asset_id": asset_id,
-            "quantity": str(qty),
-            "price_per_unit": str(price),
-            "currency": currency,
+            "from_asset_id": cash_id,
+            "from_amount": total,
+            "to_asset_id": asset_id,
+            "to_amount": str(qty),
             "date": date,
         },
         headers=headers,
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
 
 
 def _sell(client, headers, acct_id, asset_id, qty, price, date="2025-06-01", currency="EUR"):
+    cash_id = _cash_asset(client, headers, currency)
     resp = client.post(
         TRADES_URL,
         json={
             "account_id": acct_id,
-            "operation": "SELL",
-            "asset_id": asset_id,
-            "quantity": str(qty),
-            "price_per_unit": str(price),
-            "currency": currency,
+            "from_asset_id": asset_id,
+            "from_amount": str(qty),
+            "to_asset_id": cash_id,
+            "to_amount": str(Decimal(str(qty)) * Decimal(str(price))),
             "date": date,
         },
         headers=headers,
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
 
 
 # ---------------------------------------------------------------------------

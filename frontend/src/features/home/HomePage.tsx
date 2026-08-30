@@ -157,15 +157,23 @@ function PerfTooltip({ active, payload, label, currency, view }: PerfTooltipProp
 function PerformanceChart({ currency }: { currency: string }) {
   const [days, setDays] = useState<DaysOption>(90)
   const [view, setView] = useState<ChartView>('value')
+  const [accountId, setAccountId] = useState<number | null>(null)
   const apiDays = days === 'max' ? 3650 : days
-  const { data: history = [], isLoading } = usePortfolioHistory(apiDays)
+  const { data: history = [], isLoading } = usePortfolioHistory(apiDays, accountId)
+  const { data: accounts = [] } = useAccounts()
 
   const chartData = history.map((pt) => {
     const value = parseFloat(pt.total_value)
-    const cost = parseFloat(pt.total_cost)
+    const deposits = parseFloat(pt.net_deposits)
     const pnl = parseFloat(pt.total_pnl)
-    const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0
-    return { date: pt.date, 'Portfolio Value': value, 'Cost Basis': cost, 'P&L': pnl, 'P&L %': pnlPct }
+    const pnlPct = deposits > 0 ? (pnl / deposits) * 100 : 0
+    return {
+      date: pt.date,
+      'Portfolio Value': value,
+      'Net Deposits': deposits,
+      'P&L': pnl,
+      'P&L %': pnlPct,
+    }
   })
 
   const yFormatter =
@@ -191,12 +199,26 @@ function PerformanceChart({ currency }: { currency: string }) {
           ))}
         </div>
       </div>
-      <div className="flex items-center gap-1">
-        {CHART_VIEWS.map((v) => (
-          <button key={v.value} onClick={() => setView(v.value)} className={filterBtn(view === v.value)}>
-            {v.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1">
+          {CHART_VIEWS.map((v) => (
+            <button key={v.value} onClick={() => setView(v.value)} className={filterBtn(view === v.value)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <select
+          value={accountId ?? ''}
+          onChange={(e) => setAccountId(e.target.value === '' ? null : Number(e.target.value))}
+          className="rounded-lg border border-border bg-card px-2 py-1 text-xs text-slate-600 dark:text-slate-400 outline-none transition focus:border-accent-400 focus:ring-2 focus:ring-accent-400/20"
+        >
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={String(a.id)}>
+              {a.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {isLoading && (
@@ -216,7 +238,7 @@ function PerformanceChart({ currency }: { currency: string }) {
             <Tooltip content={<PerfTooltip currency={currency} view={view} />} cursor={{ stroke: 'rgba(107,140,174,0.2)', strokeWidth: 1 }} />
             <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
             <Line type="monotone" dataKey="Portfolio Value" stroke="#6B8CAE" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-            <Line type="monotone" dataKey="Cost Basis" stroke="#94a3b8" strokeWidth={2} dot={false} strokeDasharray="4 3" activeDot={{ r: 4 }} />
+            <Line type="monotone" dataKey="Net Deposits" stroke="#94a3b8" strokeWidth={2} dot={false} strokeDasharray="4 3" activeDot={{ r: 4 }} />
           </LineChart>
         </ResponsiveContainer>
       )}
@@ -295,7 +317,7 @@ export default function HomePage() {
   // Greeting
   const hour = new Date().getHours()
   const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
-  const username = user?.email?.split('@')[0] ?? ''
+  const username = user?.name?.trim() || (user?.email?.split('@')[0] ?? '')
   const currency = user?.base_currency ?? 'EUR'
 
   // Asset symbol + type lookup maps
@@ -414,19 +436,26 @@ export default function HomePage() {
     return items.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
   }, [transfers, trades])
 
-  // Savings tiles: net deposits and time in market
-  const savingsStats = useMemo(() => {
-    // Net deposits: transfers into internal accounts (to_account_id set) minus out (from_account_id set)
-    // We sum amounts in their own currency — use as approximate for display (no FX on frontend)
-    let deposited = 0
-    let withdrawn = 0
-    ;(transfers ?? []).forEach((t) => {
-      const amt = parseFloat(t.amount) || 0
-      if (t.to_account_id !== null) deposited += amt
-      if (t.from_account_id !== null) withdrawn += amt
-    })
-    const netDeposits = deposited - withdrawn
+  // Portfolio totals: positions plus cash, against the money actually put in.
+  const totals = useMemo(() => {
+    const positions = parseFloat(portfolio?.total_current_value ?? '0') || 0
+    const cash = (portfolio?.account_fiat ?? []).reduce(
+      (sum, af) => sum + af.rows.reduce((s, r) => s + (parseFloat(r.current_value ?? '0') || 0), 0),
+      0
+    )
+    const netDeposits = parseFloat(portfolio?.total_net_deposits ?? '0') || 0
+    const value = positions + cash
+    const gain = value - netDeposits
+    return {
+      cash,
+      value,
+      netDeposits,
+      gain,
+      gainPct: netDeposits > 0 ? (gain / netDeposits) * 100 : null,
+    }
+  }, [portfolio])
 
+  const savingsStats = useMemo(() => {
     // Time in market: days from first trade to today
     const tradeDates = (trades ?? []).map((t) => t.date).sort()
     let timeInMarket: string = '—'
@@ -440,15 +469,15 @@ export default function HomePage() {
         : `${Math.floor(days / 365)}y ${Math.floor((days % 365) / 30)}mo`
     }
 
-    return { netDeposits, timeInMarket }
-  }, [transfers, trades])
+    return { timeInMarket }
+  }, [trades])
 
   // Net worth: portfolio value + Firefly III account balances (raw sum, no FX on frontend)
   const netWorth = useMemo(() => {
-    const portfolioValue = parseFloat(portfolio?.total_current_value ?? '0') || 0
+    const portfolioValue = totals.value
     const fireflyTotal = (fireflyAccounts ?? []).reduce((sum, a) => sum + (parseFloat(a.balance) || 0), 0)
     return { portfolioValue, fireflyTotal, total: portfolioValue + fireflyTotal, hasFirefly: (fireflyAccounts?.length ?? 0) > 0 }
-  }, [portfolio, fireflyAccounts])
+  }, [totals, fireflyAccounts])
 
   return (
     <motion.div
@@ -473,63 +502,43 @@ export default function HomePage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             label="Total Value"
-            value={fmtCurrency(portfolio.total_current_value, currency)}
+            value={fmtCurrency(totals.value.toString(), currency)}
           />
-          <StatCard
-            label="Cost Basis"
-            value={fmtCurrency(portfolio.total_cost_basis, currency)}
-          />
-          <StatCard
-            label="Unrealized P&L"
-            value={fmtCurrency(portfolio.total_unrealized_pnl, currency)}
-            colorClass={pnlClass(portfolio.total_unrealized_pnl)}
-          />
-          <StatCard
-            label="P&L %"
-            value={fmtPct(portfolio.total_unrealized_pnl_pct)}
-            colorClass={pnlClass(portfolio.total_unrealized_pnl_pct)}
-          />
-        </div>
-      )}
-
-      {/* 2b. Savings tiles */}
-      {(transfers || trades) && (
-        <div className="grid grid-cols-2 gap-4">
           <StatCard
             label="Net Deposits"
-            value={fmtCurrency(savingsStats.netDeposits.toString(), currency)}
+            value={fmtCurrency(totals.netDeposits.toString(), currency)}
+          />
+          <StatCard
+            label="Total Return"
+            value={fmtCurrency(totals.gain.toString(), currency)}
+            colorClass={pnlClass(totals.gain.toString())}
+          />
+          <StatCard
+            label="Return %"
+            value={fmtPct(totals.gainPct?.toString() ?? null)}
+            colorClass={pnlClass(totals.gainPct?.toString() ?? null)}
+          />
+          <StatCard
+            label="Cash"
+            value={fmtCurrency(totals.cash.toString(), currency)}
           />
           <StatCard
             label="Time in Market"
             value={savingsStats.timeInMarket}
           />
-        </div>
-      )}
-
-      {/* 2c. Net Worth tile (only shown when Firefly III is configured) */}
-      {fireflyConfig && netWorth.hasFirefly && (
-        <div className="rounded-2xl bg-card border border-border p-5 space-y-3">
-          <h2 className="text-base font-semibold text-foreground">Net Worth</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs text-muted-foreground">Investments</span>
-              <span className="text-xl font-mono font-semibold">
-                {fmtCurrency(netWorth.portfolioValue.toString(), currency)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs text-muted-foreground">Firefly III accounts</span>
-              <span className="text-xl font-mono font-semibold">
-                {fmtCurrency(netWorth.fireflyTotal.toString(), currency)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs font-medium text-accent-500">Total Net Worth</span>
-              <span className="text-2xl font-mono font-bold text-accent-600 dark:text-accent-400">
-                {fmtCurrency(netWorth.total.toString(), currency)}
-              </span>
-            </div>
-          </div>
+          {fireflyConfig && netWorth.hasFirefly && (
+            <>
+              <StatCard
+                label="Firefly III"
+                value={fmtCurrency(netWorth.fireflyTotal.toString(), currency)}
+              />
+              <StatCard
+                label="Net Worth"
+                value={fmtCurrency(netWorth.total.toString(), currency)}
+                colorClass="text-accent-600 dark:text-accent-400"
+              />
+            </>
+          )}
         </div>
       )}
 

@@ -2,12 +2,13 @@ import csv
 import io
 import threading
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from app.core.db import get_session
 from app.core.deps import get_current_user
+from app.models.account import Account
 from app.models.asset import Asset
 from app.models.user import User
 from app.schemas.holding import PortfolioSummaryRead
@@ -30,11 +31,20 @@ def get_holdings(
 @router.get("/history")
 def get_holdings_history(
     days: int = Query(default=90, ge=1, le=3650),
+    account_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[dict[str, str]]:
     assert current_user.id is not None
-    return compute_portfolio_history(current_user.id, session, current_user.base_currency, days)
+    if account_id is not None:
+        account = session.get(Account, account_id)
+        if account is None or account.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Account not found"
+            )
+    return compute_portfolio_history(
+        current_user.id, session, current_user.base_currency, days, account_id
+    )
 
 
 @router.get("/export")

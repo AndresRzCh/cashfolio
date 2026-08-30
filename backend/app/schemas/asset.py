@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, field_validator
 
-PRICE_SOURCES = {"binance", "yfinance", "custom", "none"}
+# "fx" is what currencies use: the price is the rate to the user's base currency.
+PRICE_SOURCES = {"binance", "yfinance", "custom", "fx", "none"}
 
 
 class AssetCreate(BaseModel):

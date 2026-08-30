@@ -94,14 +94,15 @@ function ProfileSection() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const [currency, setCurrency] = useState(user?.base_currency ?? 'EUR')
+  const [name, setName] = useState(user?.name ?? '')
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const mutation = useMutation({
-    mutationFn: (base_currency: string) =>
-      api.patch('/users/me', { base_currency }).then((r) => r.data),
+    mutationFn: (body: { base_currency: string; name: string }) =>
+      api.patch('/users/me', body).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] })
-      setStatus({ type: 'success', text: 'Base currency updated.' })
+      setStatus({ type: 'success', text: 'Profile updated.' })
       setTimeout(() => setStatus(null), 3000)
     },
     onError: () => {
@@ -110,7 +111,7 @@ function ProfileSection() {
   })
 
   function handleSave() {
-    mutation.mutate(currency)
+    mutation.mutate({ base_currency: currency, name })
   }
 
   return (
@@ -129,6 +130,19 @@ function ProfileSection() {
             readOnly
             value={user?.email ?? ''}
             className={inputCls + ' opacity-60 cursor-default'}
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label htmlFor="display-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+            Name
+          </label>
+          <input
+            id="display-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="How the dashboard should greet you"
+            className={inputCls}
           />
         </div>
 

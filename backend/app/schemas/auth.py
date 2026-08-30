@@ -21,6 +21,7 @@ class TokenResponse(BaseModel):
 class UserRead(BaseModel):
     id: int
     email: str
+    name: str | None = None
     base_currency: str
 
     model_config = {"from_attributes": True}

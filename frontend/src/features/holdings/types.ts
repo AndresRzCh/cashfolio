@@ -44,4 +44,5 @@ export interface PortfolioSummary {
   total_unrealized_pnl_pct: string | null
   holdings: HoldingRow[]
   account_fiat: AccountFiatSummary[]
+  total_net_deposits: string
 }

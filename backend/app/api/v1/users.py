@@ -32,6 +32,9 @@ def update_me(
 ) -> User:
     if body.base_currency is not None:
         current_user.base_currency = body.base_currency
+    if body.name is not None:
+        # Empty string clears the name and falls the greeting back to the email.
+        current_user.name = body.name.strip() or None
     session.add(current_user)
     session.commit()
     session.refresh(current_user)

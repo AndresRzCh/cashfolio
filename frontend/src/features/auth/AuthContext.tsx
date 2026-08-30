@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 interface User {
   id: number
   email: string
+  name: string | null
   base_currency: string
 }
 
